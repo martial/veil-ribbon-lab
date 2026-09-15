@@ -1,0 +1,9 @@
+node_modules/
+dist/
+!package-lock.json
+.venv/
+.models/
+__pycache__/
+.DS_Store
+.review/
+.competitor-review.json

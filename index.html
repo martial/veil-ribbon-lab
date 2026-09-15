@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080d11" />
+    <meta name="description" content="An interactive study of a translucent ribbon, light, and wind." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M6 27Q3 12 25 5Q14 16 6 27Z' fill='%23c7dbe6'/%3E%3C/svg%3E" />
+    <title>Veil — Ribbon lab</title>
+  </head>
+  <body>
+    <main id="studio">
+      <div id="viewport" aria-label="Interactive three-dimensional ribbon. Drag to orbit and scroll to zoom."></div>
+      <div class="vignette" aria-hidden="true"></div>
+      <header class="masthead chrome">
+        <a class="wordmark" href="./" aria-label="Veil, restart the study">veil<span> / </span><small>a study of air</small></a>
+        <div class="header-right"><span class="study-tag">Ribbon lab / 001</span><button id="hide-ui" class="icon-button" aria-label="Hide controls (H)" title="Hide controls (H)"><svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM16 5v14"/></svg></button></div>
+      </header>
+      <div class="scene-caption chrome"><span class="live-dot"></span><span id="play-state">Live simulation</span><span class="caption-divider"></span><span id="material-caption">Translucent film</span></div>
+      <nav class="study-switch chrome" aria-label="Choose a study"><button id="ribbon-study" aria-pressed="true">Ribbon</button><button id="sculpture-study" aria-pressed="false">Sculpture</button><button id="smoke-study" aria-pressed="false">Smoke</button><button id="surface-view" aria-pressed="false" hidden>Photograph</button></nav>
+      <aside class="controls chrome" aria-label="Ribbon controls">
+        <div class="intro"><span class="small-label">Anchored to the floor</span><h1>Lifted<br>by the wind.</h1><p>A ribbon, caught in an updraft.<br>Air flows up and to the right ↗</p></div>
+        <section id="surface-controls" class="control-section" aria-labelledby="material-label">
+          <h2 id="material-label">Surface</h2>
+          <div class="material-options" role="group" aria-label="Material">
+            <button data-material="film" aria-pressed="true"><i class="swatch film"></i>Film</button>
+            <button data-material="organza" aria-pressed="false"><i class="swatch organza"></i>Organza</button>
+            <button data-material="silk" aria-pressed="false"><i class="swatch silk"></i>Silk</button>
+          </div>
+        </section>
+        <section id="smoke-panel" class="smoke-panel parameters" aria-label="Smoke appearance" hidden>
+          <div class="smoke-source"><img src="./samples/sculpture-source.png" alt="Source sculpture"/><span>Your sculpture<small>Image + estimated depth</small></span></div>
+          <label for="smoke-density"><span>Smoke density</span><output id="smoke-density-value">0.95</output></label><input id="smoke-density" type="range" min="0.15" max="1.5" step="0.01" value="0.95"/>
+          <label for="smoke-pixels"><span>Swirl strength</span><output id="smoke-pixels-value">4.00</output></label><input id="smoke-pixels" type="range" min="0" max="6" step="0.05" value="4"/>
+          <label for="smoke-depth"><span>Sculpture depth</span><output id="smoke-depth-value">1.00</output></label><input id="smoke-depth" type="range" min="0" max="2" step="0.01" value="1"/>
+          <label for="smoke-dispersion"><span>Dissipation</span><output id="smoke-dispersion-value">0.30</output></label><input id="smoke-dispersion" type="range" min="0" max="1" step="0.01" value="0.3"/>
+          <label for="smoke-emission"><span>Source strength</span><output id="smoke-emission-value">0.20</output></label><input id="smoke-emission" type="range" min="0" max="1.5" step="0.01" value="0.2"/>
+          <button id="smoke-reveal" class="depth-view-button">Reveal sculpture again</button>
+        </section>
+        <section class="control-section parameters" aria-label="Wind and lighting">
+          <label for="wind"><span>Wind ↗</span><output id="wind-value">0.85</output></label>
+          <input id="wind" type="range" min="0" max="1.5" step="0.01" value="0.85" />
+          <label for="turbulence"><span>Turbulence</span><output id="turbulence-value">0.30</output></label>
+          <input id="turbulence" type="range" min="0" max="1" step="0.01" value="0.30" />
+          <div class="air-tests" role="group" aria-label="Try the airflow"><button id="still-air">Still air</button><button id="breeze">Breeze</button><button id="gust">Gust ↗</button></div>
+          <label class="cloth-transmission" for="transmission"><span>Translucency</span><output id="transmission-value">0.88</output></label>
+          <input class="cloth-transmission" id="transmission" type="range" min="0" max="1" step="0.01" value="0.88" />
+          <label for="light"><span>Light</span><output id="light-value">1.00</output></label>
+          <input id="light" type="range" min="0.15" max="2" step="0.01" value="1" />
+        </section>
+        <details id="sculpture-input-panel" class="sculpture-input">
+          <summary><span>Sculpture input</span><svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></summary>
+          <div class="sample-reference"><a href="./samples/sculpture-source.png" target="_blank" rel="noopener"><img src="./samples/sculpture-source.png" alt="The supplied carved stone figurine" /></a><div><strong>Your sculpture</strong><span>Original photograph<br>with estimated depth</span><a href="./samples/source-depth.png" target="_blank" rel="noopener">View depth map</a></div></div>
+          <p>Bring your own texture or depth map. White lifts the surface; black leaves it flat.</p>
+          <div class="upload-row"><label class="upload-button" for="texture-file">Load texture<input id="texture-file" type="file" accept="image/png,image/jpeg,image/webp" /></label><button id="clear-texture" class="clear-button" aria-label="Remove texture" disabled>×</button></div>
+          <span id="texture-name" class="file-status">Procedural surface</span>
+          <div class="upload-row"><label class="upload-button" for="depth-file">Load depth map<input id="depth-file" type="file" accept="image/png,image/jpeg,image/webp" /></label><button id="clear-depth" class="clear-button" aria-label="Remove depth map" disabled>×</button></div>
+          <span id="depth-name" class="file-status">No depth map loaded</span>
+          <div class="parameters depth-parameters"><label for="memory"><span>Shape retention</span><output id="memory-value">0.65</output></label><input id="memory" type="range" min="0" max="1" step="0.01" value="0.65" disabled /></div>
+          <div class="parameters depth-parameters"><label for="relief"><span>Relief depth</span><output id="relief-value">1.00</output></label><input id="relief" type="range" min="0" max="1.8" step="0.01" value="1" disabled /></div>
+          <button id="depth-only" class="depth-view-button" aria-pressed="false" disabled>Show shape without texture</button>
+          <p class="input-note">Experimental: depth sets local fold angles. The sculpture can bend and travel with the sheet. New image generation is not connected.</p>
+        </details>
+        <div class="transport"><button id="pause" class="pause-button" aria-label="Pause simulation" aria-pressed="false"><svg id="pause-icon" viewBox="0 0 16 16"><path d="M5 3v10M11 3v10"/></svg><span id="pause-label">Pause</span></button><button id="reset" class="text-button" title="Reset the ribbon and view">Reset</button><button id="capture" class="icon-button" aria-label="Save a PNG image" title="Save a PNG image"><svg viewBox="0 0 24 24"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg></button></div>
+      </aside>
+      <footer class="footer chrome"><span>Drag to orbit <i>·</i> Scroll to move closer</span><div><span id="fps">—</span><span class="engine-tag">Three.js / WebGL 2</span></div></footer>
+      <button id="show-ui" class="show-ui" aria-label="Show controls (H)">Show controls</button>
+      <div id="loading" role="status"><span class="loading-mark">veil</span><span>Finding the light…</span></div>
+      <div id="toast" role="status" aria-live="polite"></div>
+      <div id="error" role="alert" hidden><h1>The studio needs WebGL 2.</h1><p id="error-detail">Try a current browser with hardware acceleration enabled.</p><button onclick="location.reload()">Try again</button></div>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+{
+  "source": "public/samples/sculpture-source.png",
+  "model": "apple/coreml-depth-anything-v2-small",
+  "variant": "DepthAnythingV2SmallF16",
+  "model_license": "Apache-2.0",
+  "runtime": "Core ML / coremltools 9.0",
+  "compute_units": "ALL (Core ML selects hardware)",
+  "first_inference_ms": 56.17,
+  "input_size": [
+    518,
+    392
+  ],
+  "output_size": [
+    1200,
+    1800
+  ],
+  "raw_range": [
+    0.11383056640625,
+    0.99951171875
+  ],
+  "normalization_low": 0.12060546875,
+  "normalization_high": 0.986328125,
+  "meaning": "Relative inverse depth: white is closer/higher relief. Not metric depth.",
+  "background_plane_removed": false,
+  "edge_connected_black_mask": true,
+  "depth_range": [
+    0.0,
+    1.0
+  ]
+}
