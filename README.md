@@ -144,7 +144,13 @@ Primary fluid references: [GPU Gems: Fast Fluid Dynamics](https://developer.nvid
 
 Open **http://localhost:5187/?study=projection**. The projector starts at the viewing camera's position. **Project from this view** repositions it; **Follow viewer** keeps it attached to the camera. A labeled calibration grid lets you inspect placement and fold occlusion without running inference.
 
-Every render frame captures the current ribbon's depth into a GPU target. When the model is ready, one asynchronous readback sends the newest depth image to the local service. The returned image is projected in camera coordinates onto the moving ribbon. A live projector depth buffer prevents light passing through an occluding front fold. **Start generation** runs continuously with one request at a time and no backlog. Separate metrics show generated FPS and end-to-end frame delay.
+Playback is **frame by frame**. The next cloth pose is prepared offscreen, its projector-camera depth is sent to SD-Turbo, and the returned RGB image is presented atomically with that exact pose, projector matrix, and visibility depth buffer. While inference runs, the previously completed pair remains visible. Each completed frame advances the simulation by **1/30 second** (four 1/120-second cloth steps); no intermediate simulation frames are skipped.
+
+**Run frame by frame** repeats this sequence. **Next frame** generates one pair and holds it. **Stop after this frame** finishes the in-flight pair, then holds. Errors retain the pending pose for retry. Reset and switching studies invalidate stale responses. Projector moves and viewer-follow are applied to the next capture, so they cannot change the mapping halfway through generation. The calibration grid still supports ordinary continuous cloth motion.
+
+The browser can redraw a held frame for camera orbit, but the model determines the rate of *new* frames. On this Mac the result therefore plays slower than real time; it never projects an older generated frame onto a newer cloth pose. Depth and projection previews show their frame numbers. Metrics show generated FPS and generation time.
+
+For deterministic browser regression checks, open an isolated dev projection tab and run `await (await import('/tests/projection.browser.js')).checkProjectionFrames()` in its console. This uses the real physics/rendering with controlled model responses to check held geometry, matching frame IDs, projector moves, stopping, retries and stale-response rejection.
 
 ### Run the local model
 
@@ -156,7 +162,7 @@ uv pip install --python .venv-turbo/bin/python -r scripts/requirements-turbo.txt
 
 The service listens on **127.0.0.1:5192**. Vite proxies `/turbo` to it; restart Vite after changing its config. First launch downloads SD-Turbo's FP16 weights into ignored `.models/turbo/`. The service uses PyTorch MPS on Apple Silicon, CUDA where available, otherwise CPU. It caches prompt embeddings and uses a fixed seed plus one denoising evaluation. **Image transformation** changes the input noise timestep, not the number of queued frames.
 
-The model consumes the grayscale depth image as **img2img initialization**. This is not a trained depth ControlNet and does not guarantee depth-consistent output. The generated image can lag the moving ribbon; the displayed timing makes that visible. This implementation does not claim 30 generated FPS on the Mac. Generation at 256 or 384 pixels trades image quality for speed; SD-Turbo's preferred resolution is 512 pixels.
+The model consumes the grayscale depth image as **img2img initialization**. This is not a trained depth ControlNet and does not guarantee depth-consistent output. The ribbon and generated image are synchronized; model speed determines how long each complete pair is held. This implementation does not claim 30 generated FPS on the Mac. Generation at 256 or 384 pixels trades image quality for speed; SD-Turbo's preferred resolution is 512 pixels.
 
 Measured on the M3 Pro in this workspace at 384 × 384: about 0.74 seconds of inference and 1.1 seconds end-to-end per image (roughly 0.9 generated FPS), while the WebGL study runs concurrently. These are prototype measurements, not a hardware guarantee. Run `.venv-turbo/bin/python -m unittest tests/turbo_server_test.py` to check input validation without loading model weights.
 

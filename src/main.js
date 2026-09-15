@@ -85,14 +85,15 @@ async function start() {
   composer.addPass(bloom); composer.addPass(new OutputPass());
 
   // Interpolate the simulated surface; never animate its vertices separately.
-  const updateGeometry = () => {
-    const array = positions.array;
+  const writeGeometry = targetGeometry => {
+    const array = targetGeometry.attributes.position.array;
     for (let y = 0; y <= renderRows; y++) for (let x = 0; x <= renderColumns; x++) {
       const u = x / renderColumns, v = y / renderRows, k = (y * (renderColumns + 1) + x) * 3;
       cloth.sample(u, v, array, k);
     }
-    positions.needsUpdate = true; geometry.computeVertexNormals();
+    targetGeometry.attributes.position.needsUpdate = true;targetGeometry.computeVertexNormals();
   };
+  const updateGeometry=()=>writeGeometry(geometry);
   updateGeometry();
 
   let portraitLayout = viewport.clientWidth / viewport.clientHeight < 0.9;
@@ -113,9 +114,9 @@ async function start() {
     $('play-state').textContent = paused ? 'Still frame' : 'Live simulation';
   };
   syncPause();
-  const togglePause = () => { paused = !paused; syncPause(); };
+  const togglePause = () => { paused = !paused;syncPause();if(activeStudy==='projection'&&projection?.frameLocked){paused?projection.stop():projection.run();} };
   $('pause').addEventListener('click', togglePause);
-  $('reset').addEventListener('click', () => { if(activeStudy==='smoke')smoke?.reset();else cloth.reset();homeView();updateGeometry();toast('Study and view reset'); });
+  $('reset').addEventListener('click', () => { if(activeStudy==='smoke')smoke?.reset();else {projection?.reset();cloth.reset();}homeView();updateGeometry();toast('Study and view reset'); });
   const toggleUI = () => { $('studio').classList.toggle('ui-hidden'); resize(); };
   $('hide-ui').addEventListener('click', toggleUI); $('show-ui').addEventListener('click', toggleUI);
   const onKey = event => {
@@ -270,27 +271,37 @@ async function start() {
     history.replaceState(null, '', url);
   };
   const updateProjectionStatus=state=>{
-    $('live-start').textContent=state.running?'Stop generation':'Start generation';
+    if(state.active&&state.mode==='generated'){
+      paused=!state.running;syncPause();
+      $('play-state').textContent=state.running?'Frame-by-frame playback':state.busy?'Generating one frame':'Frame held';
+    }
+    $('live-start').textContent=state.running?'Stop after this frame':'Run frame by frame';
+    $('live-next').disabled=state.busy;
+    $('live-depth-label').textContent=state.capturedFrame?`Depth · frame ${state.capturedFrame}`:'Captured depth';
     $('live-start').setAttribute('aria-pressed',String(state.running));
     $('live-grid').setAttribute('aria-pressed',String(state.mode==='grid'));
-    $('live-image-label').textContent=state.generated?'Generated image':'Calibration grid';
+    $('live-image-label').textContent=state.projectedFrame?`Projected · frame ${state.projectedFrame}`:state.mode==='grid'?'Calibration grid':'Waiting for first frame';
     $('live-rate').textContent=state.generated?`${state.generatedFps.toFixed(2)} fps`:'— fps';
     $('live-delay').textContent=state.generated?`${(state.latencyMs/1000).toFixed(2)} s`:'— ms';
-    $('live-status').textContent=state.error||(!state.ready?state.status==='loading'?'Loading SD-Turbo on this Mac…':'Local model offline':state.busy?'Generating from captured depth…':`SD-Turbo ready · ${state.device?.toUpperCase()||'GPU'}`);
+    $('live-status').textContent=state.error||(!state.ready?state.status==='loading'?'Loading SD-Turbo on this Mac…':'Local model offline':state.busy?`Generating frame ${state.capturedFrame} · holding ${state.projectedFrame||'initial pose'}`:state.projectedFrame?`Frame ${state.projectedFrame} · ${state.simulationTime.toFixed(3)} s of motion`:`SD-Turbo ready · ${state.device?.toUpperCase()||'GPU'}`);
   };
   const loadProjection=()=>{
     ++sampleVersion;
     if(!projection){
-      projection=createLiveProjection(renderer,ribbon,camera,updateProjectionStatus);
+      projection=createLiveProjection(renderer,ribbon,camera,updateProjectionStatus,(nextGeometry,advance)=>{
+        if(advance)for(let i=0;i<4;i++)cloth.step(1/120);
+        writeGeometry(nextGeometry);return cloth.time;
+      });
       $('live-depth-preview').appendChild(projection.depthPreview);$('live-image-preview').appendChild(projection.generatedPreview);
       $('live-endpoint').value=projection.state.endpoint;
     }
     selectStudy('projection');
   };
   $('projection-study').addEventListener('click',loadProjection);
-  $('live-start').addEventListener('click',()=>{if(!projection)return;projection.state.running?projection.stop():projection.run();});
+  $('live-start').addEventListener('click',()=>{if(!projection)return;paused=projection.state.running;syncPause();paused?projection.stop():projection.run();});
+  $('live-next').addEventListener('click',()=>{paused=true;syncPause();projection?.nextFrame();});
   $('live-grid').addEventListener('click',()=>projection?.setMode(projection.state.mode==='grid'?'generated':'grid'));
-  $('live-place').addEventListener('click',()=>{projection?.placeProjector();toast('Projector placed at this view');});
+  $('live-place').addEventListener('click',()=>{projection?.placeProjector();toast(projection?.frameLocked?'Projector placement applies to the next frame':'Projector placed at this view');});
   $('live-follow').addEventListener('click',()=>{if(projection){projection.state.follow=!projection.state.follow;$('live-follow').setAttribute('aria-pressed',String(projection.state.follow));}});
   $('live-prompt').addEventListener('change',()=>{if(projection)projection.state.prompt=$('live-prompt').value.trim()||projection.state.prompt;});
   $('live-endpoint').addEventListener('change',()=>{if(projection){projection.stop();projection.state.endpoint=$('live-endpoint').value.trim().replace(/\/$/,'');projection.health();}});
@@ -398,6 +409,8 @@ async function start() {
       cloth.gust*=Math.exp(-delta*1.5);
       smoke.update(paused?0:delta,{wind:cloth.params.wind+cloth.gust,turbulence:cloth.params.turbulence,dpr:renderer.getPixelRatio(),light:Number($('light').value)});
       accumulator=0;
+    }else if(activeStudy==='projection'&&projection?.frameLocked){
+      accumulator=0; // The frame scheduler advances four physics steps per generated frame.
     }else if (!paused) {
       accumulator += delta;
       while (accumulator >= fixedStep) { cloth.step(fixedStep); accumulator -= fixedStep; }
@@ -405,9 +418,11 @@ async function start() {
     } else accumulator = 0;
     if(activeStudy==='projection')projection?.update();
     const pose=(activeStudy==='smoke'||activeStudy==='projection')?[activeStudy,...camera.matrixWorld.elements,$('light').value,viewport.clientWidth,viewport.clientHeight].join(','):'';
-    if(activeStudy!=='smoke'||pose!==backgroundPose){
+    const holdProjection=activeStudy==='projection'&&projection?.frameLocked;
+    const displayKey=holdProjection?`${pose}:${projection.state.sequence}:${projection.state.projectedFrame}:${$('live-power').value}`:pose;
+    if(holdProjection?displayKey!==backgroundPose:activeStudy!=='smoke'||pose!==backgroundPose){
       if(activeStudy!=='projection'||pose!==backgroundPose){stage.update(cloth.time);stage.renderAtmosphere(camera);}
-      composer.render();backgroundPose=pose;
+      composer.render();backgroundPose=displayKey;
     }
     frameCount++;frames++;
     if (now - fpsTime >= 1000) {
@@ -425,7 +440,7 @@ async function start() {
   renderer.setAnimationLoop(animate);
   if (import.meta.env.DEV) {
     window.__veil = {
-      cloth, material, renderer, camera, orbit,get smoke(){return smoke;},get projection(){return projection;},
+      cloth, material, geometry, renderer, camera, orbit,get smoke(){return smoke;},get projection(){return projection;},
       advance(seconds) {
         if(!Number.isFinite(seconds)||seconds<0||seconds>30) throw new Error('Review step must be between 0 and 30 seconds');
         paused=true;syncPause();
@@ -433,7 +448,7 @@ async function start() {
           let remaining=seconds;
           do {const dt=Math.min(remaining,1/30);smoke.update(dt,{wind:cloth.params.wind+cloth.gust,turbulence:cloth.params.turbulence,dpr:renderer.getPixelRatio(),light:Number($('light').value)});remaining-=dt;} while(remaining>1e-6);
         }
-        else for(let i=0;i<Math.round(seconds/fixedStep);i++) cloth.step(fixedStep);
+        else {if(activeStudy==='projection')projection.reset();for(let i=0;i<Math.round(seconds/fixedStep);i++) cloth.step(fixedStep);}
         updateGeometry();stage.update(cloth.time);stage.renderAtmosphere(camera);composer.render();
       },
       stats: () => ({study:activeStudy, frames: frameCount, fps: measuredFPS, paused, time: activeStudy==='smoke'?smoke.time:cloth.time, particles:activeStudy==='smoke'?0:cloth.count,cells:activeStudy==='smoke'?smoke.count:0, triangles:activeStudy==='smoke'?0:indices.length / 3, texture: !!material.map, depth: activeStudy==='smoke'||activeStudy==='projection'||!!cloth.depth, size: [viewport.clientWidth, viewport.clientHeight] }),
