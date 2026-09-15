@@ -8,3 +8,4 @@ __pycache__/
 .review/
 .competitor-review.json
 .venv-turbo/
+.venv-fast/

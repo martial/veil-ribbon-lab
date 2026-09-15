@@ -16,9 +16,13 @@ The fluid does not contain a rigid statue, a statue-shaped density source, a par
 
 ## Separate experiment: live projection onto cloth
 
-This is a different optical setup: capture the **ribbon's geometry depth** from a projector camera, use that image as the initialization for SD-Turbo img2img, and project the generated RGB result back onto the moving cloth. A fresh projector depth buffer tests visibility so a front fold can occlude a back fold. The projector starts at the viewer, then remains fixed unless repositioned or set to follow.
+The projector captures the **ribbon's geometry depth** and sends generated RGB light back onto that same pose. Camera-space visibility prevents a front fold from receiving light intended for a back fold. Every output is synchronized with its source pose, camera matrix and depth buffer. Both previews now show the same completed frame.
 
-- [SD-Turbo model card and img2img API](https://huggingface.co/stabilityai/sd-turbo): distilled SD 2.1, compatible with single-step inference. This experiment uses a custom Euler noise timestep to adjust transformation continuously with one denoising evaluation.
-- [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion): a useful future CUDA/TensorRT backend. Its reported high frame rates are measured on an RTX 4090 setup; they are not a benchmark for this Mac.
+The initial SD-Turbo experiment used depth as img2img initialization. This could create an unrelated statue silhouette. The faster, shape-guided engine now uses **SDXS DreamShaper with the released sketch ControlNet**. Silhouette and fold edges are extracted from depth and fed to that network; an exact input mask bounds the projected image. The available weights are sketch-trained, not a trained depth ControlNet, and internal metric-depth consistency is not guaranteed.
 
-Depth is currently an **image initialization**, not a trained ControlNet condition or a geometry guarantee. Fixed noise reduces random flicker but does not establish temporal coherence. The frame-by-frame implementation prepares the next ribbon pose offscreen, then presents its generated image, pose, projector matrix, and visibility buffer together. The previous complete pair remains visible until generation finishes. Each pair advances simulation time by 1/30 second; inference determines wall-clock playback speed. Projector moves are also latched per frame.
+- [SDXS paper and models](https://github.com/IDKiro/sdxs): compressed one-step generation, with an available sketch-conditioned variant.
+- [Sketch ControlNet release](https://huggingface.co/IDKiro/sdxs-512-dreamshaper-sketch): the structure-guided model used here.
+- [StreamDiffusion for Mac](https://github.com/ochyai/streamdiffusion-mac): Core ML and tiny-VAE experiments; its 22.7 FPS measurement is for an M3 Ultra, not this Mac.
+- [SD-Turbo](https://huggingface.co/stabilityai/sd-turbo): retained as the original, slower MPS baseline.
+
+The CPU rasterizer computes the same perspective-correct triangle depth without a GPU readback stall. A 256px comparison with WebGL found identical silhouette coverage and at most one 8-bit level of depth rounding difference. One private CPU pose is prepared while inference runs. Only complete pose/image pairs are presented, each advancing simulation by 1/30 second. Fixed noise and smoothly blended cached text embeddings provide gradual material variation; they do not constitute a temporal generative model.

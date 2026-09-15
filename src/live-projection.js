@@ -1,8 +1,9 @@
 import * as THREE from 'three';
+import { rasterDepth } from './raster-depth.js';
 
 // Every visible generated frame is a matched geometry/image/projector pair.
 // The next pose is simulated offscreen; the last complete pair stays visible.
-export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},captureFrame=()=>0) {
+export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},captureFrame=()=>0,onPresent=()=>{}) {
   const camera=new THREE.PerspectiveCamera(40,1,.1,80);
   const scene=new THREE.Scene();scene.background=new THREE.Color(0);
   const depthMaterial=new THREE.ShaderMaterial({side:THREE.DoubleSide,toneMapped:false,
@@ -11,6 +12,7 @@ export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},capt
     fragmentShader:'varying float metricDepth;uniform float nearDepth;uniform float farDepth;void main(){float d=1.-clamp((metricDepth-nearDepth)/(farDepth-nearDepth),0.,1.);gl_FragColor=vec4(vec3(.08+.92*d),1.);}',
   });
   const captureGeometry=ribbon.geometry.clone();
+  const preparedGeometry=ribbon.geometry.clone();
   const mesh=new THREE.Mesh(captureGeometry,depthMaterial);mesh.matrixAutoUpdate=false;mesh.frustumCulled=false;scene.add(mesh);
   const targets=[0,1].map(()=>{
     const t=new THREE.WebGLRenderTarget(384,384,{minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter,depthBuffer:true});
@@ -46,20 +48,23 @@ export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},capt
   };
   material.customProgramCacheKey=()=> 'live-projector-depth-occlusion-v1';
   const depthPreview=document.createElement('canvas'),generatedPreview=document.createElement('img');
-  depthPreview.width=depthPreview.height=384;generatedPreview.alt='Most recent SD-Turbo generated image';
+  depthPreview.width=depthPreview.height=384;generatedPreview.alt='Most recent generated image';
+  const depthContext=depthPreview.getContext('2d',{willReadFrequently:true});
+  const inputCanvas=document.createElement('canvas'),inputContext=inputCanvas.getContext('2d',{willReadFrequently:true});
   generatedPreview.src=patternCanvas.toDataURL();
   const black=new THREE.DataTexture(new Uint8Array([0,0,0,255]),1,1);black.needsUpdate=true;
   const blankCanvas=document.createElement('canvas');blankCanvas.width=blankCanvas.height=1;
   blankCanvas.getContext('2d').fillRect(0,0,1,1);
   const blackPreview=blankCanvas.toDataURL();
-  const state={active:false,running:false,busy:false,ready:false,model:'SD-Turbo',device:null,
+  const state={active:false,running:false,busy:false,ready:false,model:'Local diffusion',device:null,supportedSizes:[192,256,384,512],
     frames:0,captures:0,generated:0,capturedFrame:0,projectedFrame:0,simulationTime:0,sequence:0,
     inferenceMs:0,latencyMs:0,generatedFps:0,ageMs:0,error:null,stepRequested:false,
     mode:'grid',endpoint:import.meta.env.DEV?'/turbo':'http://127.0.0.1:5192',prompt:'An ancient bronze sculpture with intricate carved relief, oxidized turquoise and copper gold patina, detailed ornamental engravings, museum artifact, black background',
-    seed:42,strength:.85,resolution:384,targetFps:30,follow:false};
+    seed:42,strength:.85,resolution:256,targetFps:30,follow:false,drift:.4,drifting:true,driftPhase:0,driftLabel:'warm bronze',supportsDrift:false};
   let disposed=false,generation=0,lastRequest=0,lastResult=0,nextHealth=0,healthBusy=false;
   let previewBusy=false,generatedTexture=null,modelAbort=null,originalMaterial=ribbon.material;
   let pendingFrame=null,nextFrameId=1,hasPresented=false,projectorQueued=false;
+  let preparedTime=null,lastRenderedFrame=0;
   const textureLoader=new THREE.TextureLoader();
   function copyViewer(){
     camera.copy(viewer);camera.aspect=1;
@@ -83,7 +88,13 @@ export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},capt
       const response=await fetch(state.endpoint+'/health',{signal:AbortSignal.timeout(5000)});
       if(!response.ok)throw new Error(`Model service: ${response.status}`);
       const result=await response.json();state.ready=result.status==='ready';state.device=result.device;
-      if(result.error||state.status==='offline')state.error=result.error;state.model=result.model||'SD-Turbo';
+      if(result.error||state.status==='offline')state.error=result.error;state.model=result.model||'Local diffusion';
+      if(result.supported_sizes){
+        state.supportedSizes=result.supported_sizes;
+        if(!state.supportedSizes.includes(state.resolution))state.resolution=state.supportedSizes[0];
+      }
+      state.supportsDrift=!!result.prompt_drift;
+      state.structureControl=!!result.structure_control;
       state.status=result.status;
     }catch(error){state.ready=false;state.status='offline';state.error='Start the local model service on this Mac.';}
     finally{healthBusy=false;if(!disposed)onStatus(state);}
@@ -100,46 +111,66 @@ export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},capt
     }
   }
   async function readDepth(target,epoch){
-    const w=target.width,h=target.height,data=new Uint8Array(w*h*4);
-    // Read once per generated frame (and only occasionally for calibration).
-    // A held canvas may not submit another display frame to retire an async
-    // readback fence. This small synchronous copy keeps capture deterministic.
-    renderer.readRenderTargetPixels(target,0,0,w,h,data);
     if(disposed||!state.active||epoch!==generation)return null;
-    const topDown=new Uint8ClampedArray(data.length);
-    for(let y=0;y<h;y++)topDown.set(data.subarray((h-1-y)*w*4,(h-y)*w*4),y*w*4);
-    depthPreview.width=w;depthPreview.height=h;
-    depthPreview.getContext('2d').putImageData(new ImageData(topDown,w,h),0,0);
-    return depthPreview.toDataURL('image/png');
+    const w=target.width,h=target.height;
+    const matrix=new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse).multiply(mesh.matrix);
+    const started=performance.now();
+    const topDown=rasterDepth(captureGeometry,matrix,w,depthMaterial.uniforms.nearDepth.value,depthMaterial.uniforms.farDepth.value);
+    const rastered=performance.now();
+    inputCanvas.width=w;inputCanvas.height=h;
+    inputContext.putImageData(new ImageData(topDown,w,h),0,0);
+    if(state.mode==='grid'||!hasPresented){
+      depthPreview.width=w;depthPreview.height=h;depthContext.drawImage(inputCanvas,0,0);
+    }
+    const image=inputCanvas.toDataURL('image/png');
+    state.captureTimings={raster:rastered-started,png:performance.now()-rastered};
+    return image;
   }
   function prepareFrame(){
     if(pendingFrame)return pendingFrame; // retry the same pose after an error
     if(state.follow||projectorQueued){copyViewer();projectorQueued=false;}
-    const simulationTime=captureFrame(captureGeometry,hasPresented);
+    let simulationTime;
+    if(preparedTime!==null){copyGeometry(preparedGeometry,captureGeometry);simulationTime=preparedTime;preparedTime=null;}
+    else simulationTime=captureFrame(captureGeometry,hasPresented);
     const target=targets[captureIndex];target.setSize(state.resolution,state.resolution);
     const matrix=new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
-    pendingFrame={id:nextFrameId,simulationTime,target,matrix};
+    if(hasPresented&&state.drifting)state.driftPhase+=1/90;
+    pendingFrame={id:nextFrameId,simulationTime,target,matrix,driftPhase:state.driftPhase};
     renderDepth(target);state.captures++;state.capturedFrame=nextFrameId;
     return pendingFrame;
   }
   async function requestFrame(){
     state.busy=true;const epoch=generation,started=performance.now();
+    let presented=false;
     const controller=new AbortController();modelAbort=controller;
     // Latch settings together with the depth capture, before any await.
-    const settings={prompt:state.prompt,seed:state.seed,strength:state.strength,endpoint:state.endpoint};
+    const settings={prompt:state.prompt,seed:state.seed,strength:state.strength,endpoint:state.endpoint,drift:state.drift};
     try{
-      const frame=prepareFrame();onStatus(state);
+      const frame=prepareFrame(),prepared=performance.now();onStatus(state);
       const depth=await readDepth(frame.target,epoch);
+      const captured=performance.now();
       if(!depth||disposed||epoch!==generation)return;
-      const response=await fetch(settings.endpoint+'/generate',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({frame_id:frame.id,depth,prompt:settings.prompt,seed:settings.seed,strength:settings.strength}),
+      const responsePromise=fetch(settings.endpoint+'/generate',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({frame_id:frame.id,depth,prompt:settings.prompt,seed:settings.seed,strength:settings.strength,
+          drift:settings.drift,drift_phase:frame.driftPhase}),
         signal:AbortSignal.any([controller.signal,AbortSignal.timeout(180000)])});
+      // Compute the next CPU pose while Core ML works on this frame. It remains
+      // private until its own depth capture and generation complete. A stopped
+      // sequence retains this pose for Next frame, so no simulation frame skips.
+      if(state.running&&preparedTime===null)setTimeout(()=>{
+        if(epoch===generation&&!disposed&&state.running&&preparedTime===null){
+          preparedTime=captureFrame(preparedGeometry,true);
+        }
+      },0);
+      const response=await responsePromise;
       const result=await response.json();
+      const received=performance.now();
       if(disposed||epoch!==generation)return;
       if(response.status===429){lastRequest=performance.now()+1000;return;}
       if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:`Generation failed (${response.status})`);
       if(result.frame_id!==frame.id||!result.image?.startsWith('data:image/png;base64,'))throw new Error('Invalid model frame');
       const texture=await textureLoader.loadAsync(result.image);
+      const decoded=performance.now();
       if(disposed||epoch!==generation){texture.dispose();return;}
       texture.colorSpace=THREE.SRGBColorSpace;texture.minFilter=THREE.LinearFilter;texture.generateMipmaps=false;
       // Present atomically: pose + normals + RGB + the exact projector matrix
@@ -149,21 +180,27 @@ export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},capt
       uniforms.projectorMatrix.value.copy(frame.matrix);
       uniforms.projectorDepth.value=frame.target.depthTexture;
       generatedTexture?.dispose();generatedTexture=texture;generatedPreview.src=result.image;
+      depthPreview.width=inputCanvas.width;depthPreview.height=inputCanvas.height;depthContext.drawImage(inputCanvas,0,0);
       const now=performance.now();state.generatedFps=lastResult?1000/(now-lastResult):1000/(now-started);
+      state.timings={prepare:prepared-started,readback:captured-prepared,network:received-captured,decode:decoded-received,commit:now-decoded};
       lastResult=now;state.inferenceMs=result.inference_ms;state.latencyMs=now-started;
       state.generated++;state.projectedFrame=frame.id;state.simulationTime=frame.simulationTime;
+      state.driftLabel=result.drift_label||'Fixed prompt';
       state.error=null;state.stepRequested=false;hasPresented=true;
       captureIndex=1-captureIndex;nextFrameId++;pendingFrame=null;
+      presented=true;
     }catch(error){
       if(error.name!=='AbortError'&&!disposed&&epoch===generation){state.error=error.message;state.running=false;state.stepRequested=false;}
     }finally{
       if(modelAbort===controller){state.busy=false;modelAbort=null;}
+      if(presented&&!disposed&&epoch===generation)onPresent();
       if(!disposed)onStatus(state);
     }
   }
   function resetSequence(){
-    generation++;modelAbort?.abort();pendingFrame=null;hasPresented=false;nextFrameId=1;
+    generation++;modelAbort?.abort();pendingFrame=null;hasPresented=false;nextFrameId=1;preparedTime=null;lastRenderedFrame=0;
     state.sequence++;
+    state.driftPhase=0;
     state.running=false;state.stepRequested=false;state.projectedFrame=0;state.capturedFrame=0;
     state.generated=0;state.simulationTime=0;state.inferenceMs=0;state.latencyMs=0;state.generatedFps=0;state.error=null;lastResult=0;
     uniforms.projectionMap.value=state.mode==='grid'?pattern:black;
@@ -192,9 +229,10 @@ export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},capt
     run(){selectGenerated();state.running=true;health();onStatus(state);},
     nextFrame(){selectGenerated();state.running=false;state.stepRequested=true;health();onStatus(state);},
     stop(){state.running=false;state.stepRequested=false;onStatus(state);},
+    frameRendered(){lastRenderedFrame=state.projectedFrame;this.update();},
     setPower(value){uniforms.projectionPower.value=value;},
     update(){
-      if(!state.active||disposed)return;
+      if(!state.active||disposed||document.hidden)return;
       const now=performance.now();state.frames++;state.ageMs=lastResult?now-lastResult:0;
       if(now>nextHealth){nextHealth=now+3000;health();}
       if(state.mode==='grid'){
@@ -207,11 +245,11 @@ export function createLiveProjection(renderer,ribbon,viewer,onStatus=()=>{},capt
         if(!previewBusy&&state.frames%20===1){
           previewBusy=true;readDepth(target,generation).catch(()=>{}).finally(()=>{previewBusy=false;});
         }
-      }else if((state.running||state.stepRequested)&&state.ready&&!state.busy&&now-lastRequest>=1000/state.targetFps){
+      }else if((state.running||state.stepRequested)&&state.ready&&!state.busy&&state.projectedFrame===lastRenderedFrame&&now-lastRequest>=1000/state.targetFps){
         lastRequest=now;requestFrame();
       }
       if(state.frames%20===0)onStatus(state);
     },
-    dispose(){disposed=true;generation++;modelAbort?.abort();targets.forEach(t=>t.dispose());captureGeometry.dispose();depthMaterial.dispose();material.dispose();pattern.dispose();black.dispose();generatedTexture?.dispose();},
+    dispose(){disposed=true;generation++;modelAbort?.abort();targets.forEach(t=>t.dispose());captureGeometry.dispose();preparedGeometry.dispose();depthMaterial.dispose();material.dispose();pattern.dispose();black.dispose();generatedTexture?.dispose();},
   };
 }

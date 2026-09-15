@@ -140,33 +140,47 @@ The photograph is sampled as fixed rear-projected light through this volume. The
 
 Primary fluid references: [GPU Gems: Fast Fluid Dynamics](https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu) and [GPU Gems 3: Real-Time 3D Fluids](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-30-real-time-simulation-and-rendering-3d-fluids).
 
-## Live projection: ribbon depth → SD-Turbo → ribbon
+## Live projection: frame-matched, shape-guided diffusion
 
-Open **http://localhost:5187/?study=projection**. The projector starts at the viewing camera's position. **Project from this view** repositions it; **Follow viewer** keeps it attached to the camera. A labeled calibration grid lets you inspect placement and fold occlusion without running inference.
+Open **http://localhost:5187/?study=projection**. The projector starts at the viewing camera's position. **Project from this view** repositions it; **Follow viewer** tracks the camera. A calibration grid shows placement and fold occlusion.
 
-Playback is **frame by frame**. The next cloth pose is prepared offscreen, its projector-camera depth is sent to SD-Turbo, and the returned RGB image is presented atomically with that exact pose, projector matrix, and visibility depth buffer. While inference runs, the previously completed pair remains visible. Each completed frame advances the simulation by **1/30 second** (four 1/120-second cloth steps); no intermediate simulation frames are skipped.
+Each generated frame presents its **exact ribbon pose, RGB image, projector matrix and visibility buffer together**. The preceding pair stays visible during inference. The solver advances four 1/120-second substeps per output frame. During continuous playback, one additional CPU pose is prepared privately while the model runs; it is retained if playback stops. No simulation frames are skipped. Each completed pair is rendered immediately before requesting another.
 
-**Run frame by frame** repeats this sequence. **Next frame** generates one pair and holds it. **Stop after this frame** finishes the in-flight pair, then holds. Errors retain the pending pose for retry. Reset and switching studies invalidate stale responses. Projector moves and viewer-follow are applied to the next capture, so they cannot change the mapping halfway through generation. The calibration grid still supports ordinary continuous cloth motion.
+Camera depth is rasterized from the same indexed ribbon triangles on the CPU, with perspective correction, near/far clipping and a nearest-surface z-buffer. This avoids a measured ~70ms WebGL readback stall. A separate GPU depth attachment handles projector occlusion. Projection uses a 96 × 32 interpolation mesh when opened directly, sufficient for its 256px generated images; the original ribbon study keeps its 160 × 48 mesh.
 
-The browser can redraw a held frame for camera orbit, but the model determines the rate of *new* frames. On this Mac the result therefore plays slower than real time; it never projects an older generated frame onto a newer cloth pose. Depth and projection previews show their frame numbers. Metrics show generated FPS and generation time.
+- **Run frame by frame / Next frame:** continuous matched pairs or one held pair.
+- **Stop after this frame:** complete the active pair and hold it.
+- **Prompt wandering / Look held:** smoothly vary the prompt between bronze, pearl, smoky glass and jade, or hold the current mixture. The original prompt remains part of every frame. Style embeddings are cached, so drift does not re-run the text encoder every frame.
+- **How far it wanders:** strength of the prompt variation; zero keeps the base prompt.
+- **Fold guidance:** strength of depth-derived edges in the guided model.
+- Both previews show the **same completed frame**, including during the next generation.
 
-For deterministic browser regression checks, open an isolated dev projection tab and run `await (await import('/tests/projection.browser.js')).checkProjectionFrames()` in its console. This uses the real physics/rendering with controlled model responses to check held geometry, matching frame IDs, projector moves, stopping, retries and stale-response rejection.
-
-### Run the local model
+### Fast local model on Apple Silicon
 
 ```sh
-uv venv --python 3.12 .venv-turbo
-uv pip install --python .venv-turbo/bin/python -r scripts/requirements-turbo.txt
-.venv-turbo/bin/python scripts/turbo_server.py
+uv venv --python 3.12 .venv-fast
+uv pip install --python .venv-fast/bin/python -r scripts/requirements-fast.txt
+.venv-fast/bin/python scripts/prepare_fast_models.py --model sketch --sizes 256
+VEIL_ENGINE=coreml-sketch .venv-fast/bin/python scripts/turbo_server.py
 ```
 
-The service listens on **127.0.0.1:5192**. Vite proxies `/turbo` to it; restart Vite after changing its config. First launch downloads SD-Turbo's FP16 weights into ignored `.models/turbo/`. The service uses PyTorch MPS on Apple Silicon, CUDA where available, otherwise CPU. It caches prompt embeddings and uses a fixed seed plus one denoising evaluation. **Image transformation** changes the input noise timestep, not the number of queued frames.
+The current engine combines **SDXS DreamShaper + its sketch ControlNet + the tiny decoder**, compiled to Core ML. Automatic compute placement permits CPU, GPU and Neural Engine use. The model is distilled for timestep 999; using lower timesteps produced nearly flat grey images, so the guided mode uses the trained single step. The text encoder is released after caching embeddings to reduce memory use on this 18 GB Mac.
 
-The model consumes the grayscale depth image as **img2img initialization**. This is not a trained depth ControlNet and does not guarantee depth-consistent output. The ribbon and generated image are synchronized; model speed determines how long each complete pair is held. This implementation does not claim 30 generated FPS on the Mac. Generation at 256 or 384 pixels trades image quality for speed; SD-Turbo's preferred resolution is 512 pixels.
+**Shape constraints:** the released small ControlNet is sketch-trained, not depth-trained. We extract silhouette and fold edges from each depth map to guide generation. A separate exact input-silhouette mask prevents projected pixels outside the ribbon. Internal relief is still the model's interpretation; the mask alone does not guarantee correct internal anatomy or metric depth. This is stronger structural guidance than the earlier depth-as-img2img initialization, which could invent a different outline.
 
-Measured on the M3 Pro in this workspace at 384 × 384: about 0.74 seconds of inference and 1.1 seconds end-to-end per image (roughly 0.9 generated FPS), while the WebGL study runs concurrently. These are prototype measurements, not a hardware guarantee. Run `.venv-turbo/bin/python -m unittest tests/turbo_server_test.py` to check input validation without loading model weights.
+On this **M3 Pro, 18 GPU cores / 18 GB**, a warm 600-frame browser test measured **20.8 generated and rendered pairs per second at 256 × 256**, with prompt drift active and no frame-ID errors. Mean request time was 47ms; model inference averaged 37ms. All four drift materials appeared, holding the prompt mixture worked, and the final image had zero pixels outside its captured silhouette. This excludes model/prompt cold start and varies with system load. These are generated frames, not display refreshes or interpolated frames. Resolution is below the model's native 512px, so fine detail is limited.
 
-The connection panel also accepts a service implementing `GET /health` and `POST /generate` with the contract in `scripts/turbo_server.py`. Model weights, Python environments, and incoming frames are not published. GitHub Pages can display the projection study but cannot run Python inference; viewers need a running local or remote compatible service. Browser local-network permissions may apply when connecting from the public site.
+The service listens at **127.0.0.1:5192**; Vite proxies `/turbo` to it. Model weights, compiled packages and environments stay in ignored `.models/` and `.venv-fast/`. GitHub Pages hosts the interface only; inference requires this local service or a compatible endpoint. Public-site access to the local service may require browser local-network permission.
+
+### Reproduce and compare
+
+- `.venv-fast/bin/python scripts/benchmark_fast.py --model sketch --sizes 256 --compute-units ALL` benchmarks the model pipeline using a captured depth image at `.review/live-depth-input.png`. It reports inference and PNG encoding separately; it does not claim to measure browser FPS.
+- `prepare_fast_models.py --model sdxs --sizes 192 256 384` prepares the unguided SDXS 0.9 alternative. `VEIL_ENGINE=coreml-sdxs` selects it. Initial tests found automatic Core ML placement much faster than forcing GPU-only placement on this Mac.
+- The original SD-Turbo/MPS baseline remains available via `.venv-turbo/bin/python scripts/turbo_server.py`. It measured roughly 0.9 generated FPS at 384px. It does not support prompt wandering or the sketch guidance.
+- `npm test` covers cloth behavior and the CPU depth rasterizer. In an isolated dev projection tab, run `await (await import('/tests/projection.browser.js')).checkProjectionFrames()` for real WebGL/physics checks with controlled model responses, including stopping, retrying, projector changes and stale-response rejection.
+- `.venv-fast/bin/python -m unittest tests/turbo_server_test.py` checks the transport boundary without loading model weights.
+
+Sources: [SDXS research and released models](https://github.com/IDKiro/sdxs), [SDXS sketch weights](https://huggingface.co/IDKiro/sdxs-512-dreamshaper-sketch), [Core ML/TAESD experiments on M3 Ultra](https://github.com/ochyai/streamdiffusion-mac). That project's 22.7 FPS M3 Ultra result motivated the experiments; our M3 Pro measurements above are separate.
 
 ## GitHub Pages
 

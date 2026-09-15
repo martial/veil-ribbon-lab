@@ -29,7 +29,8 @@ class DepthInputTest(unittest.TestCase):
 
     def test_request_limits(self):
         valid = dict(frame_id=1, depth=png((256, 256)), prompt='Bronze relief')
-        for extra in [dict(seed=-1), dict(strength=0), dict(prompt=''), dict(frame_id=-1)]:
+        for extra in [dict(seed=-1), dict(strength=0), dict(prompt=''), dict(frame_id=-1),
+                      dict(drift=-.1), dict(drift=1.1), dict(drift_phase=-1), dict(drift_phase=float('nan'))]:
             with self.subTest(extra=extra), self.assertRaises(ValidationError):
                 Frame(**(valid | extra))
 

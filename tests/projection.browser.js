@@ -41,11 +41,12 @@ export async function checkProjectionFrames() {
     await sleep(180);
     check(hash()===first.hash&&p.generatedPreview.src===first.image,'Pose, normals and image stay fixed during inference');
     check(p.state.projectedFrame===1&&p.state.simulationTime===first.time,'Visible frame and simulation time stay fixed during inference');
-    check(Math.abs(v.cloth.time-first.time-1/30)<1e-9,'Next pose advances exactly four physics substeps');
+    check(v.cloth.time>first.time&&v.cloth.time<=first.time+2/30+1e-9,'Only the pending pose and one private lookahead are simulated');
     respond(requests[1]);await wait(()=>p.state.projectedFrame===2);await sleep(100);
     check(hash()!==first.hash&&requests.length===2&&!p.state.running,'Stop finishes the current pair without requesting another');
+    check(Math.abs(p.state.simulationTime-first.time-1/30)<1e-9,'Presented frames advance by exactly four physics substeps');
     check(matrix()===first.matrix,'Moving the projector cannot change a captured frame');
-    const secondHash=hash(),secondTime=v.cloth.time;
+    const secondHash=hash(),secondTime=p.state.simulationTime;
     p.nextFrame();await wait(()=>requests.length===3);
     respond(requests[2],500);await wait(()=>!p.state.busy);
     check(hash()===secondHash&&p.state.projectedFrame===2&&!!p.state.error,'Failure holds the last completed pair');

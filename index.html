@@ -49,17 +49,19 @@
           <div class="projection-previews"><figure><div id="live-depth-preview"></div><figcaption id="live-depth-label">Captured depth</figcaption></figure><figure><div id="live-image-preview"></div><figcaption id="live-image-label">Calibration grid</figcaption></figure></div>
           <p id="live-status" class="live-status" role="status">Local SD-Turbo</p>
           <div class="live-metrics"><span>Generated<strong id="live-rate">— fps</strong></span><span>Generation time<strong id="live-delay">— ms</strong></span></div>
+          <div class="projection-actions"><button id="live-start">Run frame by frame</button><button id="live-next">Next frame</button><button id="live-grid" aria-pressed="true">Test grid</button></div>
           <label class="live-label" for="live-prompt">Describe the projected image</label>
           <textarea id="live-prompt" rows="3" spellcheck="false">An ancient bronze sculpture with intricate carved relief, oxidized turquoise and copper gold patina, detailed ornamental engravings, museum artifact, black background</textarea>
-          <div class="projection-actions"><button id="live-start">Run frame by frame</button><button id="live-next">Next frame</button><button id="live-grid" aria-pressed="true">Test grid</button></div>
+          <div class="projection-actions"><button id="live-wander" aria-pressed="true">Prompt wandering</button><span id="live-drift-label" class="drift-label">Warm bronze</span></div>
+          <div class="parameters"><label for="live-drift"><span>How far it wanders</span><output id="live-drift-value">0.40</output></label><input id="live-drift" type="range" min="0" max="0.75" step="0.01" value="0.4"/></div>
           <div class="projection-actions"><button id="live-place">Project from this view</button><button id="live-follow" aria-pressed="false">Follow viewer</button></div>
           <div class="parameters">
             <label for="live-power"><span>Projection brightness</span><output id="live-power-value">1.30</output></label><input id="live-power" type="range" min="0" max="3" step="0.01" value="1.3"/>
-            <label for="live-strength"><span>Image transformation</span><output id="live-strength-value">0.85</output></label><input id="live-strength" type="range" min="0.25" max="0.95" step="0.05" value="0.85"/>
+            <label for="live-strength"><span id="live-strength-label">Image transformation</span><output id="live-strength-value">0.85</output></label><input id="live-strength" type="range" min="0.25" max="0.95" step="0.05" value="0.85"/>
           </div>
           <details class="fluid-controls"><summary>Model connection</summary>
             <label class="live-label" for="live-endpoint">Local service / GPU endpoint</label><input id="live-endpoint" class="live-text-input" type="text" value="http://127.0.0.1:5192" spellcheck="false"/>
-            <label class="live-label" for="live-resolution">Generation size</label><select id="live-resolution"><option value="256">256 × 256 / faster</option><option value="384" selected>384 × 384</option><option value="512">512 × 512 / model native</option></select>
+            <label class="live-label" for="live-resolution">Generation size</label><select id="live-resolution"><option value="192">192 × 192 / speed test</option><option value="256" selected>256 × 256 / faster</option><option value="384">384 × 384 / detail</option><option value="512">512 × 512 / model native</option></select>
             <label class="live-label" for="live-seed">Fixed seed</label><input id="live-seed" class="live-text-input" type="number" value="42" min="0" max="4294967295"/>
           </details>
           <p class="projection-note">Each 1/30-second ribbon frame waits for its generated image. Pose and projection appear together; no frames are skipped.</p>

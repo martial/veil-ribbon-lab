@@ -26,6 +26,7 @@
 .projection-modes button,.projection-actions button{flex:1;border:1px solid #8ba4b833;border-radius:3px;color:#829aa8;padding:9px 4px;font-size:10px}
 .projection-modes button[aria-pressed=true],.projection-actions button[aria-pressed=true]{background:#8ba4b816;border-color:#8ba4b86b;color:#d7e4ec}
 .projection-actions{margin-bottom:10px}.projection-note{font-size:10px;line-height:1.65;color:#7e94a1;margin:0 0 16px}
+.drift-label{flex:1;align-self:center;text-align:right;font-size:10px;color:#b6c7ca;text-transform:capitalize}
 .fluid-controls{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0}
 .fluid-controls summary{font-size:11px;color:#a8bdc9;cursor:pointer}.fluid-controls[open] summary{margin-bottom:19px}
 

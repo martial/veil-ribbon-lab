@@ -33,7 +33,7 @@ async function start() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   viewport.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
-  let activeStudy='ribbon',smoke=null,smokePromise=null,projection=null;
+  let activeStudy='ribbon',smoke=null,smokePromise=null,projection=null,presentProjection=null;
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 80);
   const orbit = new OrbitControls(camera, renderer.domElement);
   orbit.enableDamping = true; orbit.dampingFactor = 0.055; orbit.enablePan = false;
@@ -50,7 +50,8 @@ async function start() {
   const textures = createSurfaceTextures(renderer);
   const material = createRibbonMaterial(textures);
   const sourceMask = attachSourceMask(material);
-  const renderColumns = 160, renderRows = 48;
+  // At 256px projection resolution this interpolation is already subpixel.
+  const renderColumns = requestedStudy==='projection'?96:160, renderRows = requestedStudy==='projection'?32:48;
   const geometry = new THREE.PlaneGeometry(1, 1, renderColumns, renderRows);
   const positions = geometry.attributes.position;
   positions.setUsage(THREE.DynamicDrawUsage);
@@ -271,19 +272,29 @@ async function start() {
     history.replaceState(null, '', url);
   };
   const updateProjectionStatus=state=>{
+    if(state.active){
+      const model=state.model.split('/').at(-1);
+      $('material-caption').textContent=`Live depth / ${model}`;
+      for(const option of $('live-resolution').options)option.disabled=!state.supportedSizes.includes(Number(option.value));
+      $('live-resolution').value=String(state.resolution);
+    }
     if(state.active&&state.mode==='generated'){
       paused=!state.running;syncPause();
       $('play-state').textContent=state.running?'Frame-by-frame playback':state.busy?'Generating one frame':'Frame held';
     }
     $('live-start').textContent=state.running?'Stop after this frame':'Run frame by frame';
     $('live-next').disabled=state.busy;
-    $('live-depth-label').textContent=state.capturedFrame?`Depth · frame ${state.capturedFrame}`:'Captured depth';
+    const previewFrame=state.projectedFrame||state.capturedFrame;
+    $('live-depth-label').textContent=previewFrame?`Depth · frame ${previewFrame}`:'Captured depth';
+    $('live-drift-label').textContent=state.supportsDrift?state.driftLabel:'Fixed prompt';
+    $('live-wander').disabled=!state.supportsDrift;$('live-drift').disabled=!state.supportsDrift;
+    $('live-strength-label').textContent=state.structureControl?'Fold guidance':'Image transformation';
     $('live-start').setAttribute('aria-pressed',String(state.running));
     $('live-grid').setAttribute('aria-pressed',String(state.mode==='grid'));
     $('live-image-label').textContent=state.projectedFrame?`Projected · frame ${state.projectedFrame}`:state.mode==='grid'?'Calibration grid':'Waiting for first frame';
     $('live-rate').textContent=state.generated?`${state.generatedFps.toFixed(2)} fps`:'— fps';
     $('live-delay').textContent=state.generated?`${(state.latencyMs/1000).toFixed(2)} s`:'— ms';
-    $('live-status').textContent=state.error||(!state.ready?state.status==='loading'?'Loading SD-Turbo on this Mac…':'Local model offline':state.busy?`Generating frame ${state.capturedFrame} · holding ${state.projectedFrame||'initial pose'}`:state.projectedFrame?`Frame ${state.projectedFrame} · ${state.simulationTime.toFixed(3)} s of motion`:`SD-Turbo ready · ${state.device?.toUpperCase()||'GPU'}`);
+    $('live-status').textContent=state.error||(!state.ready?state.status==='loading'?'Loading the model on this Mac…':'Local model offline':state.busy?`Generating frame ${state.capturedFrame} · holding ${state.projectedFrame||'initial pose'}`:state.projectedFrame?`Frame ${state.projectedFrame} · ${state.simulationTime.toFixed(3)} s of motion`:`${state.model.split('/').at(-1)} ready · ${state.device?.toUpperCase()||'GPU'}`);
   };
   const loadProjection=()=>{
     ++sampleVersion;
@@ -291,7 +302,7 @@ async function start() {
       projection=createLiveProjection(renderer,ribbon,camera,updateProjectionStatus,(nextGeometry,advance)=>{
         if(advance)for(let i=0;i<4;i++)cloth.step(1/120);
         writeGeometry(nextGeometry);return cloth.time;
-      });
+      },()=>presentProjection?.());
       $('live-depth-preview').appendChild(projection.depthPreview);$('live-image-preview').appendChild(projection.generatedPreview);
       $('live-endpoint').value=projection.state.endpoint;
     }
@@ -303,12 +314,14 @@ async function start() {
   $('live-grid').addEventListener('click',()=>projection?.setMode(projection.state.mode==='grid'?'generated':'grid'));
   $('live-place').addEventListener('click',()=>{projection?.placeProjector();toast(projection?.frameLocked?'Projector placement applies to the next frame':'Projector placed at this view');});
   $('live-follow').addEventListener('click',()=>{if(projection){projection.state.follow=!projection.state.follow;$('live-follow').setAttribute('aria-pressed',String(projection.state.follow));}});
+  $('live-wander').addEventListener('click',()=>{if(projection){projection.state.drifting=!projection.state.drifting;
+    $('live-wander').setAttribute('aria-pressed',String(projection.state.drifting));$('live-wander').textContent=projection.state.drifting?'Prompt wandering':'Look held';}});
   $('live-prompt').addEventListener('change',()=>{if(projection)projection.state.prompt=$('live-prompt').value.trim()||projection.state.prompt;});
   $('live-endpoint').addEventListener('change',()=>{if(projection){projection.stop();projection.state.endpoint=$('live-endpoint').value.trim().replace(/\/$/,'');projection.health();}});
   $('live-resolution').addEventListener('change',()=>{if(projection)projection.state.resolution=Number($('live-resolution').value);});
   $('live-seed').addEventListener('change',()=>{if(projection)projection.state.seed=Math.max(0,Math.min(4294967295,Math.round(Number($('live-seed').value)||42)));});
-  for(const id of ['live-power','live-strength']){
-    syncRange(id);$(id).addEventListener('input',()=>{syncRange(id);if(projection){if(id==='live-power')projection.setPower(Number($(id).value));else projection.state.strength=Number($(id).value);}});
+  for(const id of ['live-power','live-strength','live-drift']){
+    syncRange(id);$(id).addEventListener('input',()=>{syncRange(id);if(projection){if(id==='live-power')projection.setPower(Number($(id).value));else projection.state[id==='live-drift'?'drift':'strength']=Number($(id).value);}});
   }
   const projectionNote=()=>{
     const isFlat=Number($('smoke-depth').value)===0;
@@ -399,8 +412,21 @@ async function start() {
   });
 
   let lastTime = performance.now(), accumulator = 0, frames = 0, fpsTime = lastTime;
-  let frameCount = 0, measuredFPS = 0,backgroundPose='';
+  let frameCount = 0, measuredFPS = 0,backgroundPose='',atmospherePose='';
   const fixedStep = 1 / 120;
+  const renderScene=()=>{
+    const pose=(activeStudy==='smoke'||activeStudy==='projection')?[activeStudy,...camera.matrixWorld.elements,$('light').value,viewport.clientWidth,viewport.clientHeight].join(','):'';
+    const holdProjection=activeStudy==='projection'&&projection?.frameLocked;
+    const displayKey=holdProjection?`${pose}:${projection.state.sequence}:${projection.state.projectedFrame}:${$('live-power').value}`:pose;
+    if(holdProjection?displayKey!==backgroundPose:activeStudy!=='smoke'||pose!==backgroundPose){
+      if(activeStudy!=='projection'||pose!==atmospherePose){stage.update(cloth.time);stage.renderAtmosphere(camera);atmospherePose=pose;}
+      composer.render();backgroundPose=displayKey;
+      if(holdProjection)projection.frameRendered();
+    }
+  };
+  // Present each completed pair immediately; do not add another animation-frame
+  // wait to the inference loop. Every generated image gets a real scene render.
+  presentProjection=()=>{if(!document.hidden)renderScene();};
   const animate = now => {
     const delta = Math.min((now - lastTime) / 1000, 1 / 15); lastTime = now;
     if (document.hidden) { accumulator = 0; return; }
@@ -417,13 +443,7 @@ async function start() {
       updateGeometry();
     } else accumulator = 0;
     if(activeStudy==='projection')projection?.update();
-    const pose=(activeStudy==='smoke'||activeStudy==='projection')?[activeStudy,...camera.matrixWorld.elements,$('light').value,viewport.clientWidth,viewport.clientHeight].join(','):'';
-    const holdProjection=activeStudy==='projection'&&projection?.frameLocked;
-    const displayKey=holdProjection?`${pose}:${projection.state.sequence}:${projection.state.projectedFrame}:${$('live-power').value}`:pose;
-    if(holdProjection?displayKey!==backgroundPose:activeStudy!=='smoke'||pose!==backgroundPose){
-      if(activeStudy!=='projection'||pose!==backgroundPose){stage.update(cloth.time);stage.renderAtmosphere(camera);}
-      composer.render();backgroundPose=displayKey;
-    }
+    renderScene();
     frameCount++;frames++;
     if (now - fpsTime >= 1000) {
       measuredFPS = Math.round(frames * 1000 / (now - fpsTime));
