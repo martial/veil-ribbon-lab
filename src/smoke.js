@@ -8,9 +8,9 @@ const LOWER=[-1.92,-2.6,-1.536],UPPER=[1.92,3.16,1.536];
 const BYTES_PER_ROW=Math.ceil(GRID[0]*8/256)*256;
 const BYTE_SIZE=BYTES_PER_ROW*GRID[1]*GRID[2];
 const layouts={
-  clear:[6],initialize:[0,4,5,6,7],advectVelocity:[0,1,5,6],curl:[1,6],
+  clear:[6],initialize:[0,6,7],advectVelocity:[0,1,5,6],curl:[1,6],
   forces:[0,1,2,3,6],divergence:[1,6],pressure:[2,3,6],project:[1,3,6],
-  advectDensity:[0,1,2,5,6],correctDensity:[0,1,2,3,4,5,6],
+  advectDensity:[0,1,2,5,6],correctDensity:[0,1,2,3,5,6],
 };
 
 export async function createSculptureSmoke(viewport,camera,onError=console.error) {
@@ -24,7 +24,7 @@ export async function createSculptureSmoke(viewport,camera,onError=console.error
   });
   device.lost.then(info=>{if(!disposed){failure=info.message||'The fluid GPU device was lost.';onError(failure);}});
   const canvas=document.createElement('canvas');canvas.className='fluid-canvas';canvas.hidden=true;
-  canvas.setAttribute('aria-label','Volumetric smoke with a 3D fluid simulation');viewport.appendChild(canvas);
+  canvas.setAttribute('aria-label','A photograph projected through turbulent smoke, with depth and visible light pixels');viewport.appendChild(canvas);
   const context=canvas.getContext('webgpu');
   const format=navigator.gpu.getPreferredCanvasFormat();
   context.configure({device,format,alphaMode:'premultiplied'});
@@ -37,10 +37,10 @@ export async function createSculptureSmoke(viewport,camera,onError=console.error
   const velocity=[texture('Current velocity'),texture('Advected velocity'),texture('Velocity with forces')];
   const density=[texture('Smoke density'),texture('Forward density'),texture('Corrected density')];
   const pressure=[texture('Pressure A'),texture('Pressure B')];
-  const curl=texture('Vorticity'),divergence=texture('Divergence'),source=texture('Sculpture smoke source');
+  const curl=texture('Vorticity'),divergence=texture('Divergence');
   const sampler=device.createSampler({minFilter:'linear',magFilter:'linear',addressModeU:'clamp-to-edge',addressModeV:'clamp-to-edge',addressModeW:'clamp-to-edge'});
   const uniform=device.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
-  const viewUniform=device.createBuffer({size:128,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
+  const viewUniform=device.createBuffer({size:160,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
   const fluidModule=device.createShaderModule({label:'3D stable-fluid solver',code:fluidCode});
   const volumeModule=device.createShaderModule({label:'Smoke volume ray marcher',code:volumeCode});
   for(const module of [fluidModule,volumeModule]){
@@ -58,36 +58,27 @@ export async function createSculptureSmoke(viewport,camera,onError=console.error
   const [image,depth,mask]=await Promise.all([
     loadLocalSample(`${import.meta.env.BASE_URL}samples/sculpture-source.png`),loadLocalSample(`${import.meta.env.BASE_URL}samples/source-depth.png`),loadLocalSample(`${import.meta.env.BASE_URL}samples/source-mask.png`),
   ]);
-  const iw=128,ih=192;
+  const iw=768,ih=1152;
   function pixels(image){const c=document.createElement('canvas');c.width=iw;c.height=ih;const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(image,0,0,iw,ih);return g.getImageData(0,0,iw,ih).data;}
   const color=pixels(image),relief=pixels(depth),silhouette=pixels(mask);
-  const sourceData=new Uint16Array(GRID[0]*GRID[1]*GRID[2]*4);
-  for(let z=0;z<GRID[2];z++)for(let y=0;y<GRID[1];y++)for(let x=0;x<GRID[0];x++){
-    const wx=LOWER[0]+(x+.5)*CELL,wy=LOWER[1]+(y+.5)*CELL,wz=LOWER[2]+(z+.5)*CELL;
-    const u=wx/2.65+.5,v=.5-(wy+.3)/4.0;
-    if(u<0||u>1||v<0||v>1)continue;
-    const index=(Math.min(ih-1,Math.floor(v*ih))*iw+Math.min(iw-1,Math.floor(u*iw)))*4;
-    const maskValue=silhouette[index]/255;if(maskValue<.08)continue;
-    const d=relief[index]/255,front=(d-.25)*1.1,back=-.3-d*.12;
-    const center=(front+back)*.5,halfWidth=Math.max(.04,(front-back)*.5);
-    const edge=(Math.abs(wz-center)-halfWidth)/.075;
-    const amount=maskValue*(1-smoothstep(-1,1,edge));
-    const luma=(color[index]*.2126+color[index+1]*.7152+color[index+2]*.0722)/255;
-    const k=((z*GRID[1]+y)*GRID[0]+x)*4;
-    sourceData[k]=THREE.DataUtils.toHalfFloat(amount);
-    sourceData[k+1]=THREE.DataUtils.toHalfFloat(d);
-    sourceData[k+2]=THREE.DataUtils.toHalfFloat(luma);
+  // The photograph is fixed projected light, separate from the moving fluid.
+  function imageTexture(label,data,format){
+    const t=device.createTexture({label,size:[iw,ih],format,
+      usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST});
+    device.queue.writeTexture({texture:t},data,{bytesPerRow:iw*4},[iw,ih]);textures.push(t);return t;
   }
-  device.queue.writeTexture({texture:source},sourceData,{bytesPerRow:GRID[0]*8,rowsPerImage:GRID[1]},GRID);
+  for(let i=0;i<color.length;i+=4)color[i+3]=silhouette[i];
+  const projectedImage=imageTexture('Projector photograph (sRGB)',color,'rgba8unorm-srgb');
+  const projectedDepth=imageTexture('Projector relative depth (linear)',relief,'rgba8unorm');
   const group=new THREE.Group();group.name='3D fluid volume';group.visible=false;
-  const params={density:.95,vorticity:4.0,depth:1,dispersion:.3,emission:.2};
-  const simData=new Float32Array(8),viewData=new Float32Array(32);
+  const params={density:.75,vorticity:4.0,depth:1,dispersion:.3,emission:1.0,projector:5,pixels:128,thickness:.07,spill:.025,enabled:true};
+  const simData=new Float32Array(8),viewData=new Float32Array(40);
   const inverse=new THREE.Matrix4();
   let needsReset=true,time=0,steps=0,current=0;
   const bindCache=new Map();
   let nextTextureId=0;const textureIds=new WeakMap();
   for(const t of textures)textureIds.set(t,nextTextureId++);
-  const resources={0:{buffer:uniform},4:source.createView(),5:sampler};
+  const resources={0:{buffer:uniform},5:sampler};
   function dispatch(encoder,entry,inputs){
     const key=entry+Object.entries(inputs).map(([k,v])=>`${k}:${textureIds.get(v)}`).join(',');
     let bind=bindCache.get(key);
@@ -100,6 +91,7 @@ export async function createSculptureSmoke(viewport,camera,onError=console.error
   }
   const volumeBinds=density.map(t=>device.createBindGroup({layout:volumePipeline.getBindGroupLayout(0),entries:[
     {binding:0,resource:{buffer:viewUniform}},{binding:1,resource:t.createView()},{binding:2,resource:sampler},
+    {binding:3,resource:projectedImage.createView()},{binding:4,resource:projectedDepth.createView()},
   ]}));
   function simulate(encoder,dt,wind,turbulence){
     simData.set([dt,time,wind,turbulence,params.vorticity,params.emission,params.dispersion,params.depth]);
@@ -127,7 +119,9 @@ export async function createSculptureSmoke(viewport,camera,onError=console.error
     if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
     camera.updateMatrixWorld();inverse.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse).invert();
     viewData.set(inverse.elements,0);viewData.set([...camera.position.toArray(),time],16);
-    viewData.set([...LOWER,0],20);viewData.set([...UPPER,0],24);viewData.set([params.density,light,0,0],28);
+    viewData.set([...LOWER,0],20);viewData.set([...UPPER,0],24);viewData.set([params.density,light,params.enabled?params.projector:0,params.depth],28);
+    viewData.set([params.pixels,params.thickness,params.spill,0],32);
+    viewData.set([0,-.3,-16,16],36);
     device.queue.writeBuffer(viewUniform,0,viewData);
     const pass=encoder.beginRenderPass({colorAttachments:[{view:context.getCurrentTexture().createView(),clearValue:{r:0,g:0,b:0,a:0},loadOp:'clear',storeOp:'store'}]});
     pass.setPipeline(volumePipeline);pass.setBindGroup(0,volumeBinds[current]);pass.draw(3);pass.end();
@@ -173,5 +167,3 @@ export async function createSculptureSmoke(viewport,camera,onError=console.error
     dispose(){disposed=true;textures.forEach(t=>t.destroy());uniform.destroy();viewUniform.destroy();device.destroy();canvas.remove();},
   };
 }
-
-function smoothstep(a,b,x){const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);}

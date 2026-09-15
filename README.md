@@ -119,28 +119,48 @@ Relevant primary documentation: [Three.js physical materials](https://threejs.or
 
 Google Fonts are used for the interface with system fallbacks. The scene itself needs no external assets or API keys.
 
-## Smoke: 3D WebGPU fluid
+## Smoke: projected light through a WebGPU fluid
 
-Open **http://localhost:5187/?study=smoke**, or choose **Smoke**. A separate WebGPU renderer simulates an Eulerian smoke volume on an **80 × 120 × 64 grid (614,400 cells)**. The supplied photograph, foreground mask, and estimated depth define an initial 3D density source. The source's unseen interior is a shallow synthetic fill, not a reconstructed back surface.
+Open **http://localhost:5187/?study=smoke**, or choose **Smoke**. A separate WebGPU renderer simulates an Eulerian smoke volume on an **80 × 120 × 64 grid (614,400 cells)**. The initial mist and continuing floor jets are independent of the sculpture photograph. Velocity advection, buoyancy, vorticity confinement, 24 Jacobi pressure iterations, a matching discrete divergence/gradient, and limited MacCormack density transport drive the motion.
 
-Each step advects velocity, computes curl, applies buoyancy and vorticity confinement, solves pressure with 24 Jacobi iterations, removes the pressure gradient, then transports smoke, temperature, and a color tracer with limited MacCormack correction. A matching discrete divergence and gradient give the pressure solver a consistent seven-point Laplacian. The source adds density and heat; it does not constrain the moving fluid to stay inside the sculpture.
+The photograph is sampled as fixed rear-projected light through this volume. The depth map selects scattering layers, so image pixels can appear at different distances. This selection is a visual approximation of shaped or multiplexed fog displays, not a capability of an ordinary projector shining into arbitrary smoke. No image pixels are carried as a dye, and there is no textured sculpture mesh or sprite cloud.
 
-The volume is ray-marched with density-dependent extinction and light attenuation through the smoke. This uses WebGPU compute and a transparent WebGPU canvas over the Three.js studio. There are no particle sprites in Smoke mode. The studio background redraws when the camera or lighting changes; the fluid evolves every frame.
+- **Projector light / Projector on:** brightness and a direct comparison with unlit smoke.
+- **Image resolution:** horizontal projector pixel count. Lower values expose individual light columns.
+- **Image depth / Flat fog screen:** depth relief versus a planar layer.
+- **Layer softness:** thickness of the selected scattering layer.
+- **Light through the mist:** illumination outside that layer; more spill reduces image clarity.
+- **Fluid settings:** optical density, vorticity, dissipation, and floor emission.
+- **Refill mist:** reset the fluid, without changing the projector image.
+- **Wind / Turbulence:** ambient airflow and stirring; warm mist also has buoyancy.
 
-Controls:
+`window.__veil.smoke.diagnostics()` in development reads the actual GPU fields and reports divergence before/after pressure projection, finite density, mass, and centroid. This is a real-time fluid approximation with finite resolution, bounded timesteps, simplified thermal buoyancy, and an open boundary.
 
-- **Smoke density:** optical thickness.
-- **Swirl strength:** vorticity confinement.
-- **Sculpture depth:** depth scale of the source. Choose **Reveal sculpture again** to immediately reseed at the new depth.
-- **Dissipation:** how quickly density fades.
-- **Source strength:** continuing emission. Zero lets the initial sculpture disperse freely.
-- **Reveal sculpture again:** reseed density and reset velocity/pressure.
-- **Wind / Turbulence:** ambient flow and external stirring. Warm smoke still rises when ambient wind is zero.
-- **Pause:** freeze the fluid; camera orbit stays available.
+[Research notes: fog projection, multilayer water droplets, and what is approximated](docs/projection-research.md).
 
-`window.__veil.smoke.diagnostics()` in development reads actual GPU fields to report pre/post-projection divergence, finite density, mass, and centroid. This is a real-time fluid approximation with finite grid resolution, bounded timesteps, simplified thermal buoyancy, and an open volume boundary. It is not a calibrated engineering flow model.
+Primary fluid references: [GPU Gems: Fast Fluid Dynamics](https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu) and [GPU Gems 3: Real-Time 3D Fluids](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-30-real-time-simulation-and-rendering-3d-fluids).
 
-Primary method references: [GPU Gems: Fast Fluid Dynamics](https://developer.nvidia.com/gpugems/gpugems/part-vi-beyond-triangles/chapter-38-fast-fluid-dynamics-simulation-gpu), [GPU Gems 3: Real-Time 3D Fluids](https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-30-real-time-simulation-and-rendering-3d-fluids), and the [WebGPU specification](https://gpuweb.github.io/gpuweb/).
+## Live projection: ribbon depth → SD-Turbo → ribbon
+
+Open **http://localhost:5187/?study=projection**. The projector starts at the viewing camera's position. **Project from this view** repositions it; **Follow viewer** keeps it attached to the camera. A labeled calibration grid lets you inspect placement and fold occlusion without running inference.
+
+Every render frame captures the current ribbon's depth into a GPU target. When the model is ready, one asynchronous readback sends the newest depth image to the local service. The returned image is projected in camera coordinates onto the moving ribbon. A live projector depth buffer prevents light passing through an occluding front fold. **Start generation** runs continuously with one request at a time and no backlog. Separate metrics show generated FPS and end-to-end frame delay.
+
+### Run the local model
+
+```sh
+uv venv --python 3.12 .venv-turbo
+uv pip install --python .venv-turbo/bin/python -r scripts/requirements-turbo.txt
+.venv-turbo/bin/python scripts/turbo_server.py
+```
+
+The service listens on **127.0.0.1:5192**. Vite proxies `/turbo` to it; restart Vite after changing its config. First launch downloads SD-Turbo's FP16 weights into ignored `.models/turbo/`. The service uses PyTorch MPS on Apple Silicon, CUDA where available, otherwise CPU. It caches prompt embeddings and uses a fixed seed plus one denoising evaluation. **Image transformation** changes the input noise timestep, not the number of queued frames.
+
+The model consumes the grayscale depth image as **img2img initialization**. This is not a trained depth ControlNet and does not guarantee depth-consistent output. The generated image can lag the moving ribbon; the displayed timing makes that visible. This implementation does not claim 30 generated FPS on the Mac. Generation at 256 or 384 pixels trades image quality for speed; SD-Turbo's preferred resolution is 512 pixels.
+
+Measured on the M3 Pro in this workspace at 384 × 384: about 0.74 seconds of inference and 1.1 seconds end-to-end per image (roughly 0.9 generated FPS), while the WebGL study runs concurrently. These are prototype measurements, not a hardware guarantee. Run `.venv-turbo/bin/python -m unittest tests/turbo_server_test.py` to check input validation without loading model weights.
+
+The connection panel also accepts a service implementing `GET /health` and `POST /generate` with the contract in `scripts/turbo_server.py`. Model weights, Python environments, and incoming frames are not published. GitHub Pages can display the projection study but cannot run Python inference; viewers need a running local or remote compatible service. Browser local-network permissions may apply when connecting from the public site.
 
 ## GitHub Pages
 

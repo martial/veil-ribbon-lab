@@ -21,3 +21,18 @@
 .smoke-source small { display:block;color:#78929f;font-size:9px;margin-top:5px; }
 @media(max-width:760px){.smoke-panel{grid-column:2;}.smoke-mode .smoke-panel~.parameters{grid-column:1/-1;}.study-switch button{padding:8px 12px;}}
 #viewport .fluid-canvas { position:absolute;inset:0;width:100%;height:100%;pointer-events:none; }
+
+.projection-modes,.projection-actions{display:flex;gap:5px;margin:0 0 20px}
+.projection-modes button,.projection-actions button{flex:1;border:1px solid #8ba4b833;border-radius:3px;color:#829aa8;padding:9px 4px;font-size:10px}
+.projection-modes button[aria-pressed=true],.projection-actions button[aria-pressed=true]{background:#8ba4b816;border-color:#8ba4b86b;color:#d7e4ec}
+.projection-actions{margin-bottom:10px}.projection-note{font-size:10px;line-height:1.65;color:#7e94a1;margin:0 0 16px}
+.fluid-controls{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 0}
+.fluid-controls summary{font-size:11px;color:#a8bdc9;cursor:pointer}.fluid-controls[open] summary{margin-bottom:19px}
+
+.live-panel{margin-top:0}.projection-previews{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:0 0 13px}
+.projection-previews figure{margin:0;min-width:0}.projection-previews figure>div{aspect-ratio:1;background:#03070a;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.projection-previews canvas,.projection-previews img{width:100%;height:100%;object-fit:contain;display:block}.projection-previews figcaption{font-size:9px;color:#8ba2af;margin-top:6px}
+.live-status{font-size:10px;color:#a7bdc8;line-height:1.5;min-height:15px;margin:0 0 12px}.live-metrics{display:flex;gap:26px;margin:0 0 18px}.live-metrics span{font-size:9px;color:#7f97a5}.live-metrics strong{display:block;font-size:15px;font-weight:450;color:#c7d9e3;margin-top:5px;font-variant-numeric:tabular-nums}
+.live-label{display:block;font-size:10px;color:#a0b5c0;margin:12px 0 7px}.live-panel textarea,.live-text-input,.live-panel select{display:block;width:100%;resize:vertical;border:1px solid #9bb3c033;border-radius:3px;background:#101b22;color:#c2d4de;font:11px/1.6 'DM Sans',sans-serif;padding:9px;margin:0 0 13px}
+.live-panel .parameters{margin-top:15px}.live-panel .projection-note{margin-top:16px}
+@media(max-width:760px){.live-panel{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.live-panel>*{grid-column:1/-1}.live-panel .projection-previews{max-width:280px}.study-switch{flex-wrap:wrap;max-width:calc(100% - 52px)}}

@@ -9,6 +9,7 @@ import { RibbonCloth } from './cloth.js';
 import { createSurfaceTextures, createRibbonMaterial, setMaterialPreset } from './material.js';
 import { createStage } from './stage.js';
 import { createSculptureSmoke } from './smoke.js';
+import { createLiveProjection } from './live-projection.js';
 import { decodeImage, loadLocalSample, orientToRibbon, depthSamples, attachSourceMask } from './image-input.js';
 
 const $ = id => document.getElementById(id);
@@ -32,7 +33,7 @@ async function start() {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   viewport.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
-  let activeStudy='ribbon',smoke=null,smokePromise=null;
+  let activeStudy='ribbon',smoke=null,smokePromise=null,projection=null;
   const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 80);
   const orbit = new OrbitControls(camera, renderer.domElement);
   orbit.enableDamping = true; orbit.dampingFactor = 0.055; orbit.enablePan = false;
@@ -137,7 +138,7 @@ async function start() {
         if ((material.transmission === 0) !== (value === 0)) material.needsUpdate = true;
         material.transmission = value;
       }
-      else if (id === 'light') stage.setLight(value);
+      else if (id === 'light') stage.setLight(value*(activeStudy==='smoke'?.12:1));
       else if (id === 'relief') { cloth.params.relief = value; cloth.rebuildRest(); updateGeometry(); }
       else cloth.params[id] = value;
     });
@@ -236,29 +237,91 @@ async function start() {
   $('surface-view').addEventListener('click', () => $('depth-only').click());
   const selectStudy = study => {
     activeStudy=study;
-    const isSmoke=study==='smoke';
+    const isSmoke=study==='smoke',isProjection=study==='projection';
+    if(projection)projection.setActive(isProjection);
+    $('studio').classList.toggle('projection-mode',isProjection);
+    $('live-panel').hidden=!isProjection;
+    $('projection-study').setAttribute('aria-pressed',String(isProjection));
     $('studio').classList.toggle('smoke-mode',isSmoke);
     ribbon.visible=!isSmoke;floorRig.visible=!isSmoke;
+    stage.setLight(Number($('light').value)*(isSmoke?.12:1));
     if(smoke)smoke.setVisible(isSmoke);
     $('ribbon-study').setAttribute('aria-pressed', String(study === 'ribbon'));
     $('sculpture-study').setAttribute('aria-pressed', String(study === 'sculpture'));
     $('smoke-study').setAttribute('aria-pressed',String(isSmoke));
-    $('smoke-panel').hidden=!isSmoke;$('surface-controls').hidden=isSmoke;
-    $('sculpture-input-panel').hidden=isSmoke;
-    document.querySelectorAll('.cloth-transmission').forEach(el=>el.hidden=isSmoke);
-    $('surface-view').hidden=isSmoke||!cloth.depth||!importedTexture;
-    document.querySelector('.intro .small-label').textContent=isSmoke?'A sculpture in a moving fluid':'Anchored to the floor';
-    document.querySelector('.intro h1').innerHTML=isSmoke?'Form into<br>smoke.':'Lifted<br>by the wind.';
-    document.querySelector('.intro p').innerHTML=isSmoke?'Warm smoke rises and curls.<br>The sculpture becomes its source.':'A ribbon, caught in an updraft.<br>Air flows up and to the right ↗';
-    if(isSmoke)$('material-caption').textContent='Volumetric smoke';
+    $('smoke-panel').hidden=!isSmoke;$('surface-controls').hidden=isSmoke||isProjection;
+    $('sculpture-input-panel').hidden=isSmoke||isProjection;
+    document.querySelectorAll('.cloth-transmission').forEach(el=>el.hidden=isSmoke||isProjection);
+    $('surface-view').hidden=isSmoke||isProjection||!cloth.depth||!importedTexture;
+    document.querySelector('.intro .small-label').textContent=isSmoke?'An image, suspended in air':'Anchored to the floor';
+    document.querySelector('.intro h1').innerHTML=isSmoke?'Light through<br>smoke.':'Lifted<br>by the wind.';
+    document.querySelector('.intro p').innerHTML=isSmoke?'Pixels catch in the moving mist.<br>A photograph unfolds into depth.':'A ribbon, caught in an updraft.<br>Air flows up and to the right ↗';
+    if(isSmoke)$('material-caption').textContent='Projected light / fluid mist';
     document.querySelector('.engine-tag').textContent=isSmoke?'WebGPU / 3D fluid':'Three.js / WebGL 2';
+    if(isProjection){
+      document.querySelector('.intro .small-label').textContent='Camera → depth → image → light';
+      document.querySelector('.intro h1').innerHTML='A living<br>projection.';
+      document.querySelector('.intro p').innerHTML='The ribbon shapes each image.<br>The projector sends it back as light.';
+      $('material-caption').textContent='Live depth / SD-Turbo';
+      document.querySelector('.engine-tag').textContent='Three.js / local diffusion';
+    }
     const url = new URL(location.href);
     if(study==='ribbon')url.searchParams.delete('study');else url.searchParams.set('study',study);
     history.replaceState(null, '', url);
   };
-  for(const [id,param] of [['smoke-density','density'],['smoke-pixels','vorticity'],['smoke-depth','depth'],['smoke-dispersion','dispersion'],['smoke-emission','emission']]) {
-    syncRange(id);$(id).addEventListener('input',()=>{syncRange(id);if(smoke)smoke.params[param]=Number($(id).value);});
+  const updateProjectionStatus=state=>{
+    $('live-start').textContent=state.running?'Stop generation':'Start generation';
+    $('live-start').setAttribute('aria-pressed',String(state.running));
+    $('live-grid').setAttribute('aria-pressed',String(state.mode==='grid'));
+    $('live-image-label').textContent=state.generated?'Generated image':'Calibration grid';
+    $('live-rate').textContent=state.generated?`${state.generatedFps.toFixed(2)} fps`:'— fps';
+    $('live-delay').textContent=state.generated?`${(state.latencyMs/1000).toFixed(2)} s`:'— ms';
+    $('live-status').textContent=state.error||(!state.ready?state.status==='loading'?'Loading SD-Turbo on this Mac…':'Local model offline':state.busy?'Generating from captured depth…':`SD-Turbo ready · ${state.device?.toUpperCase()||'GPU'}`);
+  };
+  const loadProjection=()=>{
+    ++sampleVersion;
+    if(!projection){
+      projection=createLiveProjection(renderer,ribbon,camera,updateProjectionStatus);
+      $('live-depth-preview').appendChild(projection.depthPreview);$('live-image-preview').appendChild(projection.generatedPreview);
+      $('live-endpoint').value=projection.state.endpoint;
+    }
+    selectStudy('projection');
+  };
+  $('projection-study').addEventListener('click',loadProjection);
+  $('live-start').addEventListener('click',()=>{if(!projection)return;projection.state.running?projection.stop():projection.run();});
+  $('live-grid').addEventListener('click',()=>projection?.setMode(projection.state.mode==='grid'?'generated':'grid'));
+  $('live-place').addEventListener('click',()=>{projection?.placeProjector();toast('Projector placed at this view');});
+  $('live-follow').addEventListener('click',()=>{if(projection){projection.state.follow=!projection.state.follow;$('live-follow').setAttribute('aria-pressed',String(projection.state.follow));}});
+  $('live-prompt').addEventListener('change',()=>{if(projection)projection.state.prompt=$('live-prompt').value.trim()||projection.state.prompt;});
+  $('live-endpoint').addEventListener('change',()=>{if(projection){projection.stop();projection.state.endpoint=$('live-endpoint').value.trim().replace(/\/$/,'');projection.health();}});
+  $('live-resolution').addEventListener('change',()=>{if(projection)projection.state.resolution=Number($('live-resolution').value);});
+  $('live-seed').addEventListener('change',()=>{if(projection)projection.state.seed=Math.max(0,Math.min(4294967295,Math.round(Number($('live-seed').value)||42)));});
+  for(const id of ['live-power','live-strength']){
+    syncRange(id);$(id).addEventListener('input',()=>{syncRange(id);if(projection){if(id==='live-power')projection.setPower(Number($(id).value));else projection.state.strength=Number($(id).value);}});
   }
+  const projectionNote=()=>{
+    const isFlat=Number($('smoke-depth').value)===0;
+    $('projection-flat').setAttribute('aria-pressed',String(isFlat));
+    $('projection-relief').setAttribute('aria-pressed',String(!isFlat));
+    $('projection-note').textContent=isFlat?'A flat scattering layer. Increase light spill to see how an ordinary beam spreads through thick mist.':'Depth display uses the estimated depth to select scattering layers. Drag to see the relief.';
+  };
+  for(const [id,param] of [['smoke-density','density'],['smoke-swirl','vorticity'],['smoke-pixels','pixels'],['smoke-depth','depth'],['smoke-dispersion','dispersion'],['smoke-emission','emission'],['smoke-projector','projector'],['smoke-thickness','thickness'],['smoke-spill','spill']]) {
+    const sync=()=>{
+      syncRange(id);
+      if(id==='smoke-pixels')$(id+'-value').value=`${$(id).value} px`;
+      if(id==='smoke-depth')projectionNote();
+    };
+    sync();$(id).addEventListener('input',()=>{sync();if(smoke)smoke.params[param]=Number($(id).value);});
+  }
+  for(const [id,depth] of [['projection-flat',0],['projection-relief',1]])$(id).addEventListener('click',()=>{
+    $('smoke-depth').value=String(depth);$('smoke-depth').dispatchEvent(new Event('input'));
+  });
+  $('projector-toggle').addEventListener('click',()=>{
+    if(!smoke)return;
+    smoke.params.enabled=!smoke.params.enabled;
+    $('projector-toggle').textContent=smoke.params.enabled?'Projector on':'Projector off';
+    $('projector-toggle').setAttribute('aria-pressed',String(smoke.params.enabled));
+  });
   const loadSmoke=async()=>{
     const version=++sampleVersion;
     $('smoke-study').disabled=true;$('smoke-study').textContent='Loading…';
@@ -267,7 +330,7 @@ async function start() {
       await smokePromise;
       if(version!==sampleVersion)return;
       selectStudy('smoke');homeView();
-      toast('3D fluid ready — reset to reveal the sculpture again');
+      toast('Projector ready — drag to look through the depth');
     }catch(error){toast(error.message||'Could not create the smoke study.');}
     finally{$('smoke-study').disabled=false;$('smoke-study').textContent='Smoke';}
   };
@@ -340,9 +403,11 @@ async function start() {
       while (accumulator >= fixedStep) { cloth.step(fixedStep); accumulator -= fixedStep; }
       updateGeometry();
     } else accumulator = 0;
-    const pose=activeStudy==='smoke'?[...camera.matrixWorld.elements,$('light').value,viewport.clientWidth,viewport.clientHeight].join(','):'';
+    if(activeStudy==='projection')projection?.update();
+    const pose=(activeStudy==='smoke'||activeStudy==='projection')?[activeStudy,...camera.matrixWorld.elements,$('light').value,viewport.clientWidth,viewport.clientHeight].join(','):'';
     if(activeStudy!=='smoke'||pose!==backgroundPose){
-      stage.update(cloth.time);stage.renderAtmosphere(camera);composer.render();backgroundPose=pose;
+      if(activeStudy!=='projection'||pose!==backgroundPose){stage.update(cloth.time);stage.renderAtmosphere(camera);}
+      composer.render();backgroundPose=pose;
     }
     frameCount++;frames++;
     if (now - fpsTime >= 1000) {
@@ -352,6 +417,7 @@ async function start() {
   };
   if(requestedStudy==='smoke')await loadSmoke();
   else if(requestedStudy==='sculpture')await loadSculpture();
+  else if(requestedStudy==='projection')loadProjection();
   await renderer.compileAsync(scene, camera);
   stage.renderAtmosphere(camera);
   composer.render();
@@ -359,20 +425,23 @@ async function start() {
   renderer.setAnimationLoop(animate);
   if (import.meta.env.DEV) {
     window.__veil = {
-      cloth, material, renderer, camera, orbit,get smoke(){return smoke;},
+      cloth, material, renderer, camera, orbit,get smoke(){return smoke;},get projection(){return projection;},
       advance(seconds) {
         if(!Number.isFinite(seconds)||seconds<0||seconds>30) throw new Error('Review step must be between 0 and 30 seconds');
         paused=true;syncPause();
-        if(activeStudy==='smoke')smoke.update(seconds,{wind:cloth.params.wind+cloth.gust,turbulence:cloth.params.turbulence,dpr:renderer.getPixelRatio(),light:Number($('light').value)});
+        if(activeStudy==='smoke'){
+          let remaining=seconds;
+          do {const dt=Math.min(remaining,1/30);smoke.update(dt,{wind:cloth.params.wind+cloth.gust,turbulence:cloth.params.turbulence,dpr:renderer.getPixelRatio(),light:Number($('light').value)});remaining-=dt;} while(remaining>1e-6);
+        }
         else for(let i=0;i<Math.round(seconds/fixedStep);i++) cloth.step(fixedStep);
         updateGeometry();stage.update(cloth.time);stage.renderAtmosphere(camera);composer.render();
       },
-      stats: () => ({study:activeStudy, frames: frameCount, fps: measuredFPS, paused, time: activeStudy==='smoke'?smoke.time:cloth.time, particles:activeStudy==='smoke'?0:cloth.count,cells:activeStudy==='smoke'?smoke.count:0, triangles:activeStudy==='smoke'?0:indices.length / 3, texture: !!material.map, depth: activeStudy==='smoke'||!!cloth.depth, size: [viewport.clientWidth, viewport.clientHeight] }),
+      stats: () => ({study:activeStudy, frames: frameCount, fps: measuredFPS, paused, time: activeStudy==='smoke'?smoke.time:cloth.time, particles:activeStudy==='smoke'?0:cloth.count,cells:activeStudy==='smoke'?smoke.count:0, triangles:activeStudy==='smoke'?0:indices.length / 3, texture: !!material.map, depth: activeStudy==='smoke'||activeStudy==='projection'||!!cloth.depth, size: [viewport.clientWidth, viewport.clientHeight] }),
     };
   }
   if (import.meta.hot) import.meta.hot.dispose(() => {
     renderer.setAnimationLoop(null); observer.disconnect(); orbit.dispose(); stage.dispose();
-    smoke?.dispose();
+    smoke?.dispose();projection?.dispose();
     importedTexture?.dispose(); importedMask?.dispose(); textures.normal.dispose(); textures.filmNormal.dispose(); textures.roughness.dispose();
     scene.traverse(object => { object.geometry?.dispose(); object.material?.dispose(); });
     composer.dispose(); bloom.dispose(); renderer.dispose();

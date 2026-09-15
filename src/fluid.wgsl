@@ -3,7 +3,6 @@ struct Sim { step:vec4f, settings:vec4f }
 @group(0) @binding(1) var velocity:texture_3d<f32>;
 @group(0) @binding(2) var field:texture_3d<f32>;
 @group(0) @binding(3) var aux:texture_3d<f32>;
-@group(0) @binding(4) var source:texture_3d<f32>;
 @group(0) @binding(5) var linearSampler:sampler;
 @group(0) @binding(6) var output:texture_storage_3d<rgba16float,write>;
 @group(0) @binding(7) var outputDensity:texture_storage_3d<rgba16float,write>;
@@ -21,10 +20,25 @@ fn vel(p:vec3i)->vec3f{return textureLoad(velocity,safe(p),0).xyz;}
 fn scalar(p:vec3i)->f32{return textureLoad(aux,safe(p),0).x;}
 fn curlAt(p:vec3i)->vec4f{return textureLoad(aux,safe(p),0);}
 fn uv(p:vec3u)->vec3f{return (vec3f(p)+.5)/vec3f(DIM);}
-fn sourceAt(p:vec3u)->vec4f{
-  var coord=uv(p);coord.z=(coord.z-.5)/max(.12,sim.settings.w)+.5;
-  if(any(coord<vec3f(0))||any(coord>vec3f(1))){return vec4f(0);}
-  return textureSampleLevel(source,linearSampler,coord,0);
+fn hash(p:vec3f)->f32{return fract(sin(dot(p,vec3f(127.1,311.7,74.7)))*43758.5453);}
+fn noise(p:vec3f)->f32{
+  let i=floor(p);let f=fract(p);let a=f*f*(3.-2.*f);
+  return mix(mix(mix(hash(i),hash(i+vec3f(1,0,0)),a.x),mix(hash(i+vec3f(0,1,0)),hash(i+vec3f(1,1,0)),a.x),a.y),
+    mix(mix(hash(i+vec3f(0,0,1)),hash(i+vec3f(1,0,1)),a.x),mix(hash(i+vec3f(0,1,1)),hash(i+vec3f(1,1,1)),a.x),a.y),a.z);
+}
+fn initialMist(world:vec3f)->f32{
+  // A prefilled mist curtain, independent of the photograph. Noise only seeds
+  // the initial density. Subsequent motion is transported by the fluid solver.
+  let shape=(1.-smoothstep(.65,1.4,pow(world.x/1.55,2.)+pow((world.y+.1)/2.6,2.)))*exp(-pow(world.z/1.0,4.));
+  let n=noise(world*3.1)+.45*noise(world*7.2+vec3f(4.));
+  return shape*(.18+1.2*smoothstep(.35,.95,n));
+}
+fn floorSource(world:vec3f)->f32{
+  let width=1.-smoothstep(1.1,1.55,abs(world.x));
+  let height=exp(-pow((world.y+2.25)/.13,2.));
+  let layer=exp(-pow(world.z/.68,4.));
+  let jets=.6+.4*pow(sin(world.x*12.),2.);
+  return width*height*layer*jets;
 }
 fn boundary(p:vec3u)->f32{
   let d=min(vec3f(p),vec3f(DIM-1-vec3i(p)));
@@ -34,11 +48,11 @@ fn boundary(p:vec3u)->f32{
 @compute @workgroup_size(4,4,4)
 fn initialize(@builtin(global_invocation_id) p:vec3u){
   if(!valid(p)){return;}
-  let s=sourceAt(p);
   let world=MIN+uv(p)*SIZE;
+  let d=initialMist(world)*boundary(p);
   let seed=vec3f(sin(world.y*6.+world.z*3.),sin(world.z*4.+world.x*6.),cos(world.x*6.+world.y*4.));
   textureStore(output,vec3i(p),vec4f(seed*sim.step.w*.12,0));
-  textureStore(outputDensity,vec3i(p),vec4f(s.x*1.1,s.x*.7,s.z*s.x*1.1,0));
+  textureStore(outputDensity,vec3i(p),vec4f(d,d*.35,0,0));
 }
 
 @compute @workgroup_size(4,4,4)
@@ -144,11 +158,10 @@ fn correctDensity(@builtin(global_invocation_id) p:vec3u){
   corrected=clamp(corrected,lo,hi);
   corrected.x*=exp(-dt*(.055+sim.settings.z*.32));
   corrected.y*=exp(-dt*.32);corrected.z*=exp(-dt*(.055+sim.settings.z*.32));
-  let s=sourceAt(p);
-  // A weak continuing emission makes the statue legible while released smoke
-  // is free to advect. No velocity is pulled toward the source's shape.
-  let emitted=s.x*sim.settings.y*dt;
-  corrected+=vec4f(emitted,emitted*.8,emitted*s.z,0);
+  // Continuously supplied floor jets. Projector light never drives velocity,
+  // pressure, or density; changing the image cannot move the fluid.
+  let emitted=floorSource(MIN+coord*SIZE)*sim.settings.y*dt*5.;
+  corrected+=vec4f(emitted,emitted*.55,0,0);
   corrected*=mix(.84,1.,boundary(p));
   textureStore(output,q,clamp(corrected,vec4f(0),vec4f(4)));
 }

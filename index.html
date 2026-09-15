@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080d11" />
-    <meta name="description" content="An interactive study of a translucent ribbon, light, and wind." />
+    <meta name="description" content="Interactive studies of fabric in wind and an image projected into turbulent smoke." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M6 27Q3 12 25 5Q14 16 6 27Z' fill='%23c7dbe6'/%3E%3C/svg%3E" />
     <title>Veil — Ribbon lab</title>
   </head>
@@ -17,7 +17,7 @@
         <div class="header-right"><span class="study-tag">Ribbon lab / 001</span><button id="hide-ui" class="icon-button" aria-label="Hide controls (H)" title="Hide controls (H)"><svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM16 5v14"/></svg></button></div>
       </header>
       <div class="scene-caption chrome"><span class="live-dot"></span><span id="play-state">Live simulation</span><span class="caption-divider"></span><span id="material-caption">Translucent film</span></div>
-      <nav class="study-switch chrome" aria-label="Choose a study"><button id="ribbon-study" aria-pressed="true">Ribbon</button><button id="sculpture-study" aria-pressed="false">Sculpture</button><button id="smoke-study" aria-pressed="false">Smoke</button><button id="surface-view" aria-pressed="false" hidden>Photograph</button></nav>
+      <nav class="study-switch chrome" aria-label="Choose a study"><button id="ribbon-study" aria-pressed="true">Ribbon</button><button id="sculpture-study" aria-pressed="false">Sculpture</button><button id="smoke-study" aria-pressed="false">Smoke</button><button id="projection-study" aria-pressed="false">Live projection</button><button id="surface-view" aria-pressed="false" hidden>Photograph</button></nav>
       <aside class="controls chrome" aria-label="Ribbon controls">
         <div class="intro"><span class="small-label">Anchored to the floor</span><h1>Lifted<br>by the wind.</h1><p>A ribbon, caught in an updraft.<br>Air flows up and to the right ↗</p></div>
         <section id="surface-controls" class="control-section" aria-labelledby="material-label">
@@ -28,14 +28,41 @@
             <button data-material="silk" aria-pressed="false"><i class="swatch silk"></i>Silk</button>
           </div>
         </section>
-        <section id="smoke-panel" class="smoke-panel parameters" aria-label="Smoke appearance" hidden>
-          <div class="smoke-source"><img src="./samples/sculpture-source.png" alt="Source sculpture"/><span>Your sculpture<small>Image + estimated depth</small></span></div>
-          <label for="smoke-density"><span>Smoke density</span><output id="smoke-density-value">0.95</output></label><input id="smoke-density" type="range" min="0.15" max="1.5" step="0.01" value="0.95"/>
-          <label for="smoke-pixels"><span>Swirl strength</span><output id="smoke-pixels-value">4.00</output></label><input id="smoke-pixels" type="range" min="0" max="6" step="0.05" value="4"/>
-          <label for="smoke-depth"><span>Sculpture depth</span><output id="smoke-depth-value">1.00</output></label><input id="smoke-depth" type="range" min="0" max="2" step="0.01" value="1"/>
-          <label for="smoke-dispersion"><span>Dissipation</span><output id="smoke-dispersion-value">0.30</output></label><input id="smoke-dispersion" type="range" min="0" max="1" step="0.01" value="0.3"/>
-          <label for="smoke-emission"><span>Source strength</span><output id="smoke-emission-value">0.20</output></label><input id="smoke-emission" type="range" min="0" max="1.5" step="0.01" value="0.2"/>
-          <button id="smoke-reveal" class="depth-view-button">Reveal sculpture again</button>
+        <section id="smoke-panel" class="smoke-panel parameters" aria-label="Image projection in smoke" hidden>
+          <div class="smoke-source"><img src="./samples/sculpture-source.png" alt="Source sculpture"/><span>Your sculpture<small>Light projected into moving mist</small></span></div>
+          <div class="projection-modes" role="group" aria-label="Projection depth"><button id="projection-relief" aria-pressed="true">Depth display</button><button id="projection-flat" aria-pressed="false">Flat fog screen</button></div>
+          <label for="smoke-projector"><span>Projector light</span><output id="smoke-projector-value">5.00</output></label><input id="smoke-projector" type="range" min="0" max="8" step="0.05" value="5"/>
+          <label for="smoke-pixels"><span>Image resolution</span><output id="smoke-pixels-value">128 px</output></label><input id="smoke-pixels" type="range" min="24" max="384" step="8" value="128"/>
+          <label for="smoke-depth"><span>Image depth</span><output id="smoke-depth-value">1.00</output></label><input id="smoke-depth" type="range" min="0" max="1.5" step="0.01" value="1"/>
+          <label for="smoke-thickness"><span>Layer softness</span><output id="smoke-thickness-value">0.07</output></label><input id="smoke-thickness" type="range" min="0.06" max="0.55" step="0.01" value="0.07"/>
+          <label for="smoke-spill"><span>Light through the mist</span><output id="smoke-spill-value">0.025</output></label><input id="smoke-spill" type="range" min="0" max="1" step="0.005" value="0.025"/>
+          <div class="projection-actions"><button id="projector-toggle" aria-pressed="true">Projector on</button><button id="smoke-reveal">Refill mist</button></div>
+          <p class="projection-note" id="projection-note">Depth display uses the estimated depth to select scattering layers. Drag to see the relief.</p>
+          <details class="fluid-controls"><summary>Fluid settings</summary>
+            <label for="smoke-density"><span>Smoke density</span><output id="smoke-density-value">0.75</output></label><input id="smoke-density" type="range" min="0.15" max="1.5" step="0.01" value="0.75"/>
+            <label for="smoke-swirl"><span>Swirl strength</span><output id="smoke-swirl-value">4.00</output></label><input id="smoke-swirl" type="range" min="0" max="6" step="0.05" value="4"/>
+            <label for="smoke-dispersion"><span>Dissipation</span><output id="smoke-dispersion-value">0.30</output></label><input id="smoke-dispersion" type="range" min="0" max="1" step="0.01" value="0.3"/>
+            <label for="smoke-emission"><span>Floor jets</span><output id="smoke-emission-value">1.00</output></label><input id="smoke-emission" type="range" min="0" max="2" step="0.01" value="1"/>
+          </details>
+        </section>
+        <section id="live-panel" class="live-panel" aria-label="Live image generation and projection" hidden>
+          <div class="projection-previews"><figure><div id="live-depth-preview"></div><figcaption>Captured depth</figcaption></figure><figure><div id="live-image-preview"></div><figcaption id="live-image-label">Calibration grid</figcaption></figure></div>
+          <p id="live-status" class="live-status" role="status">Local SD-Turbo</p>
+          <div class="live-metrics"><span>Generated<strong id="live-rate">— fps</strong></span><span>Frame delay<strong id="live-delay">— ms</strong></span></div>
+          <label class="live-label" for="live-prompt">Describe the projected image</label>
+          <textarea id="live-prompt" rows="3" spellcheck="false">An ancient bronze sculpture with intricate carved relief, oxidized turquoise and copper gold patina, detailed ornamental engravings, museum artifact, black background</textarea>
+          <div class="projection-actions"><button id="live-start">Start generation</button><button id="live-grid" aria-pressed="true">Test grid</button></div>
+          <div class="projection-actions"><button id="live-place">Project from this view</button><button id="live-follow" aria-pressed="false">Follow viewer</button></div>
+          <div class="parameters">
+            <label for="live-power"><span>Projection brightness</span><output id="live-power-value">1.30</output></label><input id="live-power" type="range" min="0" max="3" step="0.01" value="1.3"/>
+            <label for="live-strength"><span>Image transformation</span><output id="live-strength-value">0.85</output></label><input id="live-strength" type="range" min="0.25" max="0.95" step="0.05" value="0.85"/>
+          </div>
+          <details class="fluid-controls"><summary>Model connection</summary>
+            <label class="live-label" for="live-endpoint">Local service / GPU endpoint</label><input id="live-endpoint" class="live-text-input" type="text" value="http://127.0.0.1:5192" spellcheck="false"/>
+            <label class="live-label" for="live-resolution">Generation size</label><select id="live-resolution"><option value="256">256 × 256 / faster</option><option value="384" selected>384 × 384</option><option value="512">512 × 512 / model native</option></select>
+            <label class="live-label" for="live-seed">Fixed seed</label><input id="live-seed" class="live-text-input" type="number" value="42" min="0" max="4294967295"/>
+          </details>
+          <p class="projection-note">Depth feeds SD-Turbo as an image input. Each generated frame is projected onto the ribbon; generation speed depends on the local GPU.</p>
         </section>
         <section class="control-section parameters" aria-label="Wind and lighting">
           <label for="wind"><span>Wind ↗</span><output id="wind-value">0.85</output></label>
