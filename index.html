@@ -46,6 +46,7 @@
           </details>
         </section>
         <section id="live-panel" class="live-panel" aria-label="Live image generation and projection" hidden>
+          <div class="parameters"><label for="live-width"><span>Ribbon width</span><output id="live-width-value">2.0×</output></label><input id="live-width" type="range" min="1" max="2.5" step="0.1" value="2"/></div>
           <div class="projection-previews"><figure><div id="live-depth-preview"></div><figcaption id="live-depth-label">Captured depth</figcaption></figure><figure><div id="live-image-preview"></div><figcaption id="live-image-label">Calibration grid</figcaption></figure></div>
           <p id="live-status" class="live-status" role="status">Local SD-Turbo</p>
           <div class="live-metrics"><span>Generated<strong id="live-rate">— fps</strong></span><span>Generation time<strong id="live-delay">— ms</strong></span></div>

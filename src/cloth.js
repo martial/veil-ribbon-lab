@@ -66,6 +66,18 @@ export class RibbonCloth {
     this.rebuildRest();
   }
 
+  setWidth(width) {
+    if (!Number.isFinite(width) || width < .5 || width > 6) throw new Error('Ribbon width must be between 0.5 and 6.');
+    if (width === this.width) return;
+    this.width = width;
+    for (let y = 0; y <= this.rows; y++) for (let x = 0; x <= this.columns; x++) {
+      this.base[(y * (this.columns + 1) + x) * 3] = -1.8 + (y / this.rows - .5) * width;
+    }
+    // Resize the material itself, including its stretch, bend and tether rest
+    // lengths. Scaling the rendered mesh alone would distort the simulation.
+    this.rebuildRest();
+  }
+
   rebuildRest() {
     this.rest.set(this.base);
     if (this.depth) for (let i = 0; i < this.count; i++) {

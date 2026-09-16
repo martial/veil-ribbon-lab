@@ -45,6 +45,7 @@ async function start() {
   };
   homeView();
   const cloth = new RibbonCloth();
+  if(requestedStudy==='projection')cloth.setWidth(3.8);
   // Let gravity and airflow establish the initial drape before displaying it.
   if (!reducedMotion&&requestedStudy!=='smoke') for (let i=0;i<480;i++) cloth.step();
   const textures = createSurfaceTextures(renderer);
@@ -70,8 +71,10 @@ async function start() {
   // A floor-mounted clip gathers the middle of one short edge.
   const clampMaterial = new THREE.MeshStandardMaterial({color:'#454c50',metalness:.85,roughness:.35});
   const clamp = new THREE.Mesh(new THREE.BoxGeometry(.22,.07,.16),clampMaterial);
+  clamp.scale.x=cloth.width/1.9;
   clamp.position.set(-1.8,-2.61,-.04);floorRig.add(clamp);
   const basePlate = new THREE.Mesh(new THREE.BoxGeometry(.37,.035,.29),clampMaterial);
+  basePlate.scale.x=cloth.width/1.9;
   basePlate.position.set(-1.8,-2.637,-.04);floorRig.add(basePlate);
   for(const x of [-1.94,-1.66]) {
     const screw=new THREE.Mesh(new THREE.CylinderGeometry(.016,.016,.008,8),clampMaterial);
@@ -298,6 +301,12 @@ async function start() {
   };
   const loadProjection=()=>{
     ++sampleVersion;
+    const width=Number($('live-width').value)*1.9;
+    if(cloth.width!==width){
+      projection?.reset();cloth.setWidth(width);
+      if(!reducedMotion)for(let i=0;i<480;i++)cloth.step();
+      clamp.scale.x=basePlate.scale.x=width/1.9;updateGeometry();
+    }
     if(!projection){
       projection=createLiveProjection(renderer,ribbon,camera,updateProjectionStatus,(nextGeometry,advance)=>{
         if(advance)for(let i=0;i<4;i++)cloth.step(1/120);
@@ -309,6 +318,19 @@ async function start() {
     selectStudy('projection');
   };
   $('projection-study').addEventListener('click',loadProjection);
+  const syncWidth=()=>{syncRange('live-width');$('live-width-value').value=`${Number($('live-width').value).toFixed(1)}×`;};
+  syncWidth();
+  $('live-width').addEventListener('input',syncWidth);
+  $('live-width').addEventListener('change',()=>{
+    const width=Number($('live-width').value)*1.9;
+    if(cloth.width===width)return;
+    const running=projection?.state.running,generated=projection?.frameLocked;
+    projection?.reset();cloth.setWidth(width);
+    if(!reducedMotion)for(let i=0;i<480;i++)cloth.step();
+    clamp.scale.x=basePlate.scale.x=width/1.9;updateGeometry();
+    if(running)projection.run();else if(generated)projection.nextFrame();
+    toast(`Ribbon width ${Number($('live-width').value).toFixed(1)}×`);
+  });
   $('live-start').addEventListener('click',()=>{if(!projection)return;paused=projection.state.running;syncPause();paused?projection.stop():projection.run();});
   $('live-next').addEventListener('click',()=>{paused=true;syncPause();projection?.nextFrame();});
   $('live-grid').addEventListener('click',()=>projection?.setMode(projection.state.mode==='grid'?'generated':'grid'));
